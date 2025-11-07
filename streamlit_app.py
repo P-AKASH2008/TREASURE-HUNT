@@ -112,7 +112,7 @@ def move_player(dr,dc):
     if pos in gmap.treasures:
         gmap.treasures.remove(pos)
         player.score+=50
-        st.session_state['message']="Treasure found! +50 score 🎉"
+        st.session_state['message']="Treasure found! +50 score"
     elif pos in gmap.rocks:
         gmap.rocks.remove(pos)
         player.health-=2
@@ -190,7 +190,7 @@ if st.session_state['player'] is None:
     size = 3 if level_choice=="Easy 3x3" else 5 if level_choice=="Medium 5x5" else 7
     if st.button("Start Game"):
         start_game(name,size)
-        st.experimental_rerun()
+        st.experimental_refresh()
 else:
     player=st.session_state['player']
     st.write(f"Player: {player.name} | Health: {player.health} | Lives: {player.lives} | Score: {player.score}")
@@ -203,19 +203,20 @@ else:
     with col1:
         if st.button("⬅️ Left"):
             move_player(0,-1)
-            st.experimental_rerun()
+            st.experimental_refresh()
     with col2:
         if st.button("⬆️ Up"):
             move_player(-1,0)
-            st.experimental_rerun()
+            st.experimental_refresh()
     with col3:
         if st.button("➡️ Right"):
             move_player(0,1)
-            st.experimental_rerun()
+            st.experimental_refresh()
     if st.button("⬇️ Down"):
         move_player(1,0)
-        st.experimental_rerun()
+        st.experimental_refresh()
     if st.button("Hint"):
         give_hint()
-        st.experimental_rerun()
+        st.experimental_refresh()
+
 
