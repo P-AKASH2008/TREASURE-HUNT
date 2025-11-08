@@ -1,4 +1,4 @@
-# app.py - Treasure Hunt FINAL (timer per difficulty; Hard auto-random grid)
+# app.py - Treasure Hunt (Option C: auto-scale tiles, no scrolling)
 import streamlit as st
 import random
 import json
@@ -8,13 +8,13 @@ import base64
 import mimetypes
 
 # -------------------------
-# Page config
+# Basic page config
 # -------------------------
 st.set_page_config(page_title="Treasure Hunt", layout="wide")
 
 # -------------------------
-# Sprite paths (local folder 'sprites/')
-# If a file is missing, a small placeholder SVG will be used.
+# Sprite files (local folder 'sprites/')
+# If missing, a small SVG placeholder will be used.
 # -------------------------
 SPRITE_FILES = {
     "player": "sprites/player.png",
@@ -27,18 +27,17 @@ SPRITE_FILES = {
 HIGHSCORE_FILE = "highscores.json"
 
 # -------------------------
-# Helper: convert file to data URI (so <img src=> works reliably)
+# Helper to load file -> data URI
 # -------------------------
 def file_to_data_uri(path):
     if not os.path.exists(path):
         svg = (
             "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'>"
-            "<rect width='100%' height='100%' fill='#e0e0e0'/>"
-            "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='10' fill='#777'>missing</text>"
+            "<rect width='100%' height='100%' fill='#ddd'/>"
+            "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='10' fill='#666'>missing</text>"
             "</svg>"
         )
-        b = svg.encode("utf-8")
-        return "data:image/svg+xml;base64," + base64.b64encode(b).decode()
+        return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
     ctype, _ = mimetypes.guess_type(path)
     if ctype is None:
         ctype = "application/octet-stream"
@@ -49,36 +48,32 @@ def file_to_data_uri(path):
 SPRITES = {k: file_to_data_uri(v) for k, v in SPRITE_FILES.items()}
 
 # -------------------------
-# Sidebar: Settings
+# Sidebar: user settings
 # -------------------------
 st.sidebar.title("⚙️ Game Settings")
 
 difficulty = st.sidebar.selectbox("Difficulty", ["Easy", "Normal", "Hard"], index=1)
 
-# Rows & Cols selection enabled only for Easy/Normal. For Hard, grid is chosen automatically.
-user_rows = st.sidebar.selectbox("Rows (only for Easy/Normal)", [4, 6, 8, 12, 16], index=2)
-user_cols = st.sidebar.selectbox("Cols (only for Easy/Normal)", [4, 6, 8, 12, 16, 24, 32], index=2)
+# If Hard, grid choice will be random; otherwise user can choose rows/cols
+user_rows = st.sidebar.selectbox("Rows (Easy/Normal)", [4, 6, 8, 12, 16], index=2)
+user_cols = st.sidebar.selectbox("Cols (Easy/Normal)", [4, 6, 8, 12, 16, 24, 32], index=2)
 
-# Hard mode picks grid randomly from this list:
 HARD_GRID_CHOICES = [(8, 12), (12, 16), (16, 24), (16, 32)]
 
 sound_enabled = st.sidebar.checkbox("🔊 Sound (placeholder)", value=False)
 
-# -------------------------
-# Difficulty-based timer (confirmed)
-# Easy = 180s, Normal = 300s, Hard = 420s
-# -------------------------
+# Timer per difficulty
 TIME_BY_DIFFICULTY = {"Easy": 180, "Normal": 300, "Hard": 420}
 
-# -------------------------
-# Scaling base values (baseline around 8x8 => area 64)
-# -------------------------
+# Base counts
 BASE = {"TREASURES": 3, "TRAPS": 2, "HEARTS": 2, "MOVES": 25}
-
 DIFF_MULT = {"Easy": 0.9, "Normal": 1.0, "Hard": 1.25}[difficulty]
 
+# Visibility radius (Chebyshev)
+VIS_RADIUS = 2
+
 # -------------------------
-# Leaderboard utilities
+# Leaderboard helpers
 # -------------------------
 def load_highscores():
     if not os.path.exists(HIGHSCORE_FILE):
@@ -98,62 +93,48 @@ def save_highscore(name, score):
         json.dump(hs, f, indent=2)
 
 # -------------------------
-# Visibility radius (B3)
-# Chebyshev radius 2 => 5x5
+# Game functions
 # -------------------------
-VIS_RADIUS = 2
-
-# -------------------------
-# Game initialization
-# -------------------------
-def choose_grid_for_mode():
-    """Return (rows, cols). For Hard, pick random from HARD_GRID_CHOICES; else use user selection."""
+def choose_grid():
     if difficulty == "Hard":
         return random.choice(HARD_GRID_CHOICES)
     return (user_rows, user_cols)
 
-def init_game():
-    """Initialize a fresh game in session_state."""
-    rows, cols = choose_grid_for_mode()
+def init_game(force=False):
+    """
+    Initialize session state. If force True, reinit even if keys exist.
+    """
+    # If already initialized and not forced, do nothing
+    if not force and "initialized" in st.session_state:
+        return
+
+    rows, cols = choose_grid()
     st.session_state.rows = rows
     st.session_state.cols = cols
-
-    # prepare grid and session values
     st.session_state.grid = [["" for _ in range(cols)] for _ in range(rows)]
-    st.session_state.revealed = set()  # set of (r,c) permanently revealed
+    st.session_state.revealed = set()
     st.session_state.score = 0
     st.session_state.level = 1
-
-    # scale objects by area (baseline 8x8 = 64)
-    area = rows * cols
-    st.session_state.treasures = max(1, int(BASE["TREASURES"] * (area / 64) * DIFF_MULT))
-    st.session_state.traps = max(1, int(BASE["TRAPS"] * (area / 64) * DIFF_MULT))
-    st.session_state.hearts = max(0, int(BASE["HEARTS"] * (area / 64) * (0.9 if difficulty == "Hard" else 1.0)))
-
-    # moves: scale inversely by area (bigger area -> relatively fewer moves per tile)
-    st.session_state.move_limit = max(5, int(BASE["MOVES"] * (64 / max(1, area)) * (1.15 if difficulty == "Easy" else (0.9 if difficulty == "Hard" else 1.0))))
+    st.session_state.treasures = max(1, int(BASE["TREASURES"] * ((rows*cols) / 64) * DIFF_MULT))
+    st.session_state.traps = max(1, int(BASE["TRAPS"] * ((rows*cols) / 64) * DIFF_MULT))
+    st.session_state.hearts = max(0, int(BASE["HEARTS"] * ((rows*cols) / 64) * (0.9 if difficulty == "Hard" else 1.0)))
+    st.session_state.move_limit = max(5, int(BASE["MOVES"] * (64 / max(1, rows*cols)) * (1.15 if difficulty == "Easy" else (0.9 if difficulty == "Hard" else 1.0))))
     st.session_state.moves_left = st.session_state.move_limit
-
-    # timer
     st.session_state.time_limit = TIME_BY_DIFFICULTY[difficulty]
     st.session_state.start_time = time.time()
     st.session_state.total_paused = 0.0
     st.session_state.paused = False
     st.session_state.pause_start = None
-
     st.session_state.game_over = False
 
-    # populate objects then pick start pos
+    # place objects then choose start position
     place_objects()
-    # pick a random empty cell for the player (safe start)
     empty = [(r, c) for r in range(rows) for c in range(cols) if st.session_state.grid[r][c] == ""]
-    if empty:
-        st.session_state.player_pos = list(random.choice(empty))
-    else:
-        st.session_state.player_pos = [0, 0]
-
-    # reveal starting surroundings
+    st.session_state.player_pos = list(random.choice(empty)) if empty else [0, 0]
     reveal_radius(st.session_state.player_pos[0], st.session_state.player_pos[1], VIS_RADIUS)
+    st.session_state.initialized = True
+    # store current config snapshot to detect changes (no infinite re-init)
+    st.session_state._config_snapshot = {"difficulty": difficulty, "rows": rows, "cols": cols}
 
 def place_objects():
     rows = st.session_state.rows
@@ -193,9 +174,6 @@ def reveal_radius(r, c, radius):
             if 0 <= nr < rows and 0 <= nc < cols:
                 st.session_state.revealed.add((nr, nc))
 
-# -------------------------
-# Movement & cell processing
-# -------------------------
 def process_cell(r, c):
     cell = st.session_state.grid[r][c]
     if cell == "treasure":
@@ -236,9 +214,6 @@ def move_player(direction):
         st.session_state.game_over = True
         st.toast("🚨 Out of moves! Game over.")
 
-# -------------------------
-# Pause / Resume / Restart
-# -------------------------
 def toggle_pause():
     if st.session_state.game_over:
         return
@@ -246,27 +221,42 @@ def toggle_pause():
         st.session_state.paused = True
         st.session_state.pause_start = time.time()
     else:
-        # resume
         paused_for = time.time() - (st.session_state.pause_start or time.time())
         st.session_state.total_paused += paused_for
         st.session_state.pause_start = None
         st.session_state.paused = False
 
 def restart_game():
-    init_game()
+    # force re-init to pick new random grid in Hard, etc.
+    init_game(force=True)
 
 # -------------------------
-# Draw grid (fixed area)
+# Grid drawing (Option C auto-scaling)
+# Use CSS grid and data URIs to avoid heavy Streamlit columns calls
 # -------------------------
+def compute_tile_size(rows, cols, max_area_px=520):
+    """Return tile_size px based on largest dimension (Option C mapping)."""
+    max_dim = max(rows, cols)
+    # mapping (C strategy): chunky for small grids, compact for large
+    if max_dim <= 4:
+        return min(140, int(max_area_px / max_dim))
+    if max_dim <= 8:
+        return min(100, int(max_area_px / max_dim))
+    if max_dim <= 12:
+        return min(72, int(max_area_px / max_dim))
+    if max_dim <= 16:
+        return min(48, int(max_area_px / max_dim))
+    if max_dim <= 24:
+        return min(34, int(max_area_px / max_dim))
+    return max(16, int(max_area_px / max_dim))
+
 def draw_grid():
     rows = st.session_state.rows
     cols = st.session_state.cols
     grid = st.session_state.grid
     pr, pc = st.session_state.player_pos
 
-    GRID_AREA = 520  # px square area
-    max_dim = max(rows, cols)
-    tile_size = max(8, int(GRID_AREA / max_dim))
+    tile_size = compute_tile_size(rows, cols, max_area_px=520)
     container_w = tile_size * cols + (cols - 1) * 3
     container_h = tile_size * rows + (rows - 1) * 3
 
@@ -300,6 +290,7 @@ def draw_grid():
     for r in range(rows):
         for c in range(cols):
             pos = (r, c)
+            # If paused (C1) hide except player's tile
             if st.session_state.paused and pos != tuple(st.session_state.player_pos):
                 img_uri = SPRITES["fog"]
             else:
@@ -316,35 +307,31 @@ def draw_grid():
     st.markdown(html, unsafe_allow_html=True)
 
 # -------------------------
-# Ensure session state keys exist (init if missing)
+# Initialization: only when needed to avoid rerun loops
 # -------------------------
-required_keys = [
-    "rows", "cols", "grid", "revealed", "player_pos",
-    "score", "moves_left", "time_limit", "start_time",
-    "total_paused", "paused", "pause_start", "game_over",
-    "treasures", "traps", "hearts", "move_limit"
-]
-if any(k not in st.session_state for k in required_keys):
+# If not yet initialized, init
+if "initialized" not in st.session_state:
     init_game()
 
-# If difficulty switched to Hard (auto grid) or user changed selection, re-init accordingly
-# For Hard: always re-init to pick a fresh random grid choice
-if difficulty == "Hard":
-    # If previous difficulty wasn't Hard or grid dims don't match Hard-picked dims, re-init.
-    if ("_last_difficulty" not in st.session_state) or st.session_state.get("_last_difficulty") != "Hard":
-        init_game()
+# If config changed (difficulty or user selection for non-Hard), re-init once
+current_snapshot = {"difficulty": difficulty}
+if difficulty != "Hard":
+    current_snapshot.update({"rows": user_rows, "cols": user_cols})
 else:
-    # Non-Hard: if user changed rows/cols compared to current session size, re-init
-    if st.session_state.rows != user_rows or st.session_state.cols != user_cols:
-        init_game()
+    # Hard: snapshot does not include rows/cols (they're chosen randomly each new init)
+    current_snapshot.update({"rows": st.session_state.rows, "cols": st.session_state.cols})
 
-st.session_state["_last_difficulty"] = difficulty
+if st.session_state.get("_config_snapshot") != current_snapshot:
+    # If user changed difficulty or dimensions, reinit (force)
+    init_game(force=True)
 
-# Update dynamic session values (so side info is correct)
+st.session_state["_config_snapshot"] = current_snapshot
+
+# Update time limit in session (in case difficulty changed)
 st.session_state.time_limit = TIME_BY_DIFFICULTY[difficulty]
 
 # -------------------------
-# Timer accounting (pauses included). When timer reaches 0 => Game Over (confirmed)
+# Timer accounting (pauses included). When time_left == 0 => Game Over
 # -------------------------
 if st.session_state.paused and st.session_state.pause_start is not None:
     elapsed = st.session_state.pause_start - st.session_state.start_time - st.session_state.total_paused
@@ -357,16 +344,15 @@ if time_left == 0 and not st.session_state.game_over:
     st.toast("⏳ Time's up! Game over.")
 
 # -------------------------
-# UI Layout: left grid, right controls
+# UI layout
 # -------------------------
 col_left, col_right = st.columns([3, 1])
 
 with col_left:
     st.title("🏝️ Treasure Hunt")
-    # show chosen grid size (for Hard, show the randomly chosen one)
-    st.caption(f"Grid: {st.session_state.rows}×{st.session_state.cols} — Difficulty: {difficulty}")
+    st.caption(f"Grid: {st.session_state.rows}×{st.session_state.cols}  •  Difficulty: {difficulty}")
     draw_grid()
-    # small legend
+    # legend under grid
     st.markdown(
         "<div style='display:flex;gap:10px;align-items:center;margin-top:8px'>"
         f"<div>Player <img src='{SPRITES['player']}' style='height:20px;vertical-align:middle'></div>"
@@ -412,7 +398,7 @@ with col_right:
             st.warning("Enter a name before saving.")
 
 # -------------------------
-# Sidebar: leaderboard & summary
+# Sidebar summary & leaderboard
 # -------------------------
 st.sidebar.title("🏆 Leaderboard")
 hs = load_highscores()
@@ -425,11 +411,11 @@ else:
 st.sidebar.write("---")
 st.sidebar.write(f"Mode: {difficulty}")
 st.sidebar.write(f"Grid: {st.session_state.rows}×{st.session_state.cols}")
-st.sidebar.write(f"Treasures: {st.session_state.treasures} | Traps: {st.session_state.traps} | Hearts: {st.session_state.hearts}")
+st.sidebar.write(f"Treasures: {st.session_state.treasures}  Traps: {st.session_state.traps}  Hearts: {st.session_state.hearts}")
 st.sidebar.write(f"Moves: {st.session_state.move_limit}")
 st.sidebar.write(f"Timer: {st.session_state.time_limit}s (Easy=180s, Normal=300s, Hard=420s)")
-st.sidebar.write("Visibility: Chebyshev radius 2 (5×5). Revealed permanently.")
-st.sidebar.write("Pause: hides tiles except your current tile; timer frozen while paused.")
+st.sidebar.write("Visibility: Chebyshev radius 2 (5×5) — permanently revealed")
+st.sidebar.write("Pause: hides tiles except your current tile; timer frozen while paused")
 
 st.write("---")
-st.info("Tip: In Hard mode the grid size is chosen randomly from preset large sizes. Player always spawns on a random empty tile (not on treasures/traps/hearts).")
+st.info("Tip: Player spawns on a random safe tile (not on treasure/trap/heart). Use Restart to reshuffle grid (Hard picks a random large grid).")
