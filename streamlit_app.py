@@ -2,24 +2,61 @@ import streamlit as st
 import random
 import json
 import os
+import time
 
 # ----------------------------
-# GAME CONFIG
+# PAGE CONFIG
 # ----------------------------
-GRID_SIZE = 6
+st.set_page_config(
+    page_title="Treasure Hunt",
+    layout="wide",
+)
+
+# ----------------------------
+# ASSETS / SPRITES
+# ----------------------------
 SPRITE_PATHS = {
     "player": "sprites/player.png",
     "treasure": "sprites/treasure.gif",
-    "coin": "sprites/coin.gif",
     "heart": "sprites/heart.gif",
-    "rock": "sprites/rock.png",
     "trap": "sprites/trap.png",
     "fog": "sprites/fog.png",
 }
+
 HIGHSCORE_FILE = "highscores.json"
 
 # ----------------------------
-# LEADERBOARD FUNCTIONS
+# SIDEBAR
+# ----------------------------
+st.sidebar.title("⚙️ Settings")
+
+grid_size_choice = st.sidebar.selectbox(
+    "Grid Size",
+    ("4×4", "8×8", "16×16"),
+    index=1
+)
+
+GRID_SIZE = int(grid_size_choice.split("×")[0])  # convert "8×8" -> 8
+
+difficulty = st.sidebar.selectbox(
+    "Difficulty",
+    ("Easy", "Normal", "Hard")
+)
+
+sound_enabled = st.sidebar.toggle("🔊 Sound Effects", value=False)
+
+# ----------------------------
+# DIFFICULTY SETTINGS
+# ----------------------------
+difficulty_config = {
+    "Easy":  {"TREASURES": 4, "TRAPS": 1, "HEARTS": 3, "MOVES": 35, "TIME": 90},
+    "Normal":{"TREASURES": 3, "TRAPS": 2, "HEARTS": 2, "MOVES": 25, "TIME": 60},
+    "Hard":  {"TREASURES": 2, "TRAPS": 4, "HEARTS": 1, "MOVES": 20, "TIME": 45},
+}
+config = difficulty_config[difficulty]
+
+# ----------------------------
+# HIGHSCORE FUNCTIONS
 # ----------------------------
 def load_highscores():
     if not os.path.exists(HIGHSCORE_FILE):
@@ -38,23 +75,23 @@ def save_highscore(name, score):
     with open(HIGHSCORE_FILE, "w") as f:
         json.dump(highscores, f, indent=2)
 
-def display_leaderboard():
-    st.subheader("🏆 Leaderboard")
-    highscores = load_highscores()
-    if highscores:
-        for i, entry in enumerate(highscores, 1):
-            st.write(f"**{i}. {entry['name']}** — {entry['score']} pts")
-    else:
-        st.info("No highscores yet. Be the first!")
-
 # ----------------------------
-# GAME INITIALIZATION
+# INIT GAME
 # ----------------------------
 def init_game():
     st.session_state.player_pos = [0, 0]
     st.session_state.score = 0
     st.session_state.level = 1
+
+    st.session_state.moves_left = config["MOVES"]
+    st.session_state.time_limit = config["TIME"]
+    st.session_state.start_time = time.time()
+
     st.session_state.grid = [["" for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
+    st.session_state.revealed = [[False]*GRID_SIZE for _ in range(GRID_SIZE)]
+    st.session_state.revealed[0][0] = True
+    st.session_state.game_over = False
+
     place_objects()
 
 def place_objects():
@@ -66,113 +103,145 @@ def place_objects():
             if grid[r][c] == "" and [r, c] != st.session_state.player_pos:
                 return r, c
 
-    # Place treasures, traps, and hearts
-    for _ in range(3):
+    for _ in range(config["TREASURES"]):
         r, c = random_empty_cell()
         grid[r][c] = "treasure"
-    for _ in range(2):
+
+    for _ in range(config["TRAPS"]):
         r, c = random_empty_cell()
         grid[r][c] = "trap"
-    for _ in range(2):
+
+    for _ in range(config["HEARTS"]):
         r, c = random_empty_cell()
         grid[r][c] = "heart"
 
 # ----------------------------
-# PLAYER MOVEMENT
+# MOVE + GAME LOGIC
 # ----------------------------
+def reveal_cells(r, c):
+    for dr in [-1, 0, 1]:
+        for dc in [-1, 0, 1]:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < GRID_SIZE and 0 <= nc < GRID_SIZE:
+                st.session_state.revealed[nr][nc] = True
+
 def move_player(direction):
+    if st.session_state.game_over:
+        return
+
     r, c = st.session_state.player_pos
-    if direction == "up" and r > 0:
-        r -= 1
-    elif direction == "down" and r < GRID_SIZE - 1:
-        r += 1
-    elif direction == "left" and c > 0:
-        c -= 1
-    elif direction == "right" and c < GRID_SIZE - 1:
-        c += 1
+    if direction == "up" and r > 0: r -= 1
+    elif direction == "down" and r < GRID_SIZE - 1: r += 1
+    elif direction == "left" and c > 0: c -= 1
+    elif direction == "right" and c < GRID_SIZE - 1: c += 1
+
     st.session_state.player_pos = [r, c]
+    reveal_cells(r, c)
+    st.session_state.moves_left -= 1
+
     check_cell(r, c)
 
 def check_cell(r, c):
     cell = st.session_state.grid[r][c]
+
     if cell == "treasure":
         st.session_state.score += 10
         st.session_state.grid[r][c] = ""
         st.toast("💰 You found a treasure!")
+
     elif cell == "trap":
         st.session_state.score -= 5
         st.session_state.grid[r][c] = ""
-        st.toast("💥 Ouch! Trap triggered!")
+        st.toast("💥 Trap!")
+
     elif cell == "heart":
         st.session_state.score += 3
         st.session_state.grid[r][c] = ""
-        st.toast("❤️ Health bonus!")
-    # Level up condition
-    if st.session_state.score >= 30:
-        st.session_state.level += 1
-        st.session_state.score = 0
-        st.toast("⭐ Level Up!")
-        place_objects()
+        st.toast("❤️ Health Bonus!")
+
+    if st.session_state.moves_left <= 0:
+        st.session_state.game_over = True
+        st.error("🚨 You're out of moves!")
 
 # ----------------------------
 # DRAW GRID
 # ----------------------------
 def draw_grid():
     grid = st.session_state.grid
-    player_r, player_c = st.session_state.player_pos
+    revealed = st.session_state.revealed
+    pr, pc = st.session_state.player_pos
 
     for r in range(GRID_SIZE):
-        cols = st.columns(GRID_SIZE)
+        cols = st.columns(GRID_SIZE, gap="small")
         for c in range(GRID_SIZE):
-            if [r, c] == [player_r, player_c]:
+            if [r, c] == [pr, pc]:
                 cols[c].image(SPRITE_PATHS["player"], use_container_width=True)
-            elif grid[r][c] == "treasure":
-                cols[c].image(SPRITE_PATHS["treasure"], use_container_width=True)
-            elif grid[r][c] == "trap":
-                cols[c].image(SPRITE_PATHS["trap"], use_container_width=True)
-            elif grid[r][c] == "heart":
-                cols[c].image(SPRITE_PATHS["heart"], use_container_width=True)
+            elif revealed[r][c]:
+                if grid[r][c] == "treasure":
+                    cols[c].image(SPRITE_PATHS["treasure"])
+                elif grid[r][c] == "trap":
+                    cols[c].image(SPRITE_PATHS["trap"])
+                elif grid[r][c] == "heart":
+                    cols[c].image(SPRITE_PATHS["heart"])
+                else:
+                    cols[c].image(SPRITE_PATHS["fog"])
             else:
-                cols[c].image(SPRITE_PATHS["fog"], use_container_width=True)
+                cols[c].image(SPRITE_PATHS["fog"])
 
 # ----------------------------
-# STREAMLIT UI
+# START GAME IF NOT INIT
 # ----------------------------
-st.set_page_config(page_title="Treasure Hunt Game", layout="centered")
-
-st.title("🏝️ Treasure Hunt")
-st.markdown("Use the buttons to explore and find treasures!")
-
-# ✅ Ensure session state exists before drawing
-if "grid" not in st.session_state or "player_pos" not in st.session_state:
+if "grid" not in st.session_state:
     init_game()
 
-draw_grid()
+# ----------------------------
+# TIMER CHECK
+# ----------------------------
+elapsed = int(time.time() - st.session_state.start_time)
+time_left = config["TIME"] - elapsed
 
-st.write(f"**Score:** {st.session_state.score} | **Level:** {st.session_state.level}")
+if time_left <= 0 and not st.session_state.game_over:
+    st.session_state.game_over = True
+    st.error("⏳ Time's up!")
 
-col_up = st.columns([3, 1, 3])[1]
-col_left, col_down, col_right = st.columns(3)
+# ----------------------------
+# UI LAYOUT
+# ----------------------------
+col1, col2 = st.columns([3, 1])
 
-col_up.button("⬆️ Up", use_container_width=True, on_click=move_player, args=("up",))
-col_left.button("⬅️ Left", use_container_width=True, on_click=move_player, args=("left",))
-col_down.button("⬇️ Down", use_container_width=True, on_click=move_player, args=("down",))
-col_right.button("➡️ Right", use_container_width=True, on_click=move_player, args=("right",))
+with col1:
+    st.title("🏝️ Treasure Hunt")
+    draw_grid()
 
+with col2:
+    st.subheader("Controls")
+
+    if not st.session_state.game_over:
+        st.button("⬆️", on_click=move_player, args=("up",), use_container_width=True)
+        c1, c2 = st.columns(2)
+        c1.button("⬅️", on_click=move_player, args=("left",), use_container_width=True)
+        c2.button("➡️", on_click=move_player, args=("right",), use_container_width=True)
+        st.button("⬇️", on_click=move_player, args=("down",), use_container_width=True)
+    else:
+        st.warning("Game Over. Refresh to play again.")
+
+    st.metric("🕒 Time Left", f"{max(0, time_left)}s")
+    st.metric("🎯 Moves Left", st.session_state.moves_left)
+    st.metric("⭐ Score", st.session_state.score)
+
+# ----------------------------
+# SAVE HIGHSCORE
+# ----------------------------
 st.divider()
-
-name = st.text_input("Enter your name to save score:")
+name = st.text_input("Enter name to save your score:")
 if st.button("💾 Save Highscore"):
     if name.strip():
         save_highscore(name.strip(), st.session_state.score)
-        st.success("Highscore saved!")
+        st.success("Saved!")
     else:
-        st.warning("Please enter your name.")
+        st.warning("Enter a name!")
 
-display_leaderboard()
-
-
-
-
-
-
+# Leaderboard in sidebar
+st.sidebar.title("🏆 Leaderboard")
+for i, entry in enumerate(load_highscores(), 1):
+    st.sidebar.write(f"**{i}. {entry['name']}** — {entry['score']} pts")
