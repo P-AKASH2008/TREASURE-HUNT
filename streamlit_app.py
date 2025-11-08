@@ -7,7 +7,6 @@ import os
 # GAME CONFIG
 # ----------------------------
 GRID_SIZE = 6
-PLAYER_EMOJI = "🧍‍♂️"
 SPRITE_PATHS = {
     "player": "sprites/player.png",
     "treasure": "sprites/treasure.gif",
@@ -17,9 +16,7 @@ SPRITE_PATHS = {
     "trap": "sprites/trap.png",
     "fog": "sprites/fog.png",
 }
-
 HIGHSCORE_FILE = "highscores.json"
-
 
 # ----------------------------
 # LEADERBOARD FUNCTIONS
@@ -29,8 +26,10 @@ def load_highscores():
         with open(HIGHSCORE_FILE, "w") as f:
             json.dump([], f)
     with open(HIGHSCORE_FILE, "r") as f:
-        return json.load(f)
-
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return []
 
 def save_highscore(name, score):
     highscores = load_highscores()
@@ -38,7 +37,6 @@ def save_highscore(name, score):
     highscores = sorted(highscores, key=lambda x: x["score"], reverse=True)[:10]
     with open(HIGHSCORE_FILE, "w") as f:
         json.dump(highscores, f, indent=2)
-
 
 def display_leaderboard():
     st.subheader("🏆 Leaderboard")
@@ -49,9 +47,8 @@ def display_leaderboard():
     else:
         st.info("No highscores yet. Be the first!")
 
-
 # ----------------------------
-# GAME INIT
+# GAME INITIALIZATION
 # ----------------------------
 def init_game():
     st.session_state.player_pos = [0, 0]
@@ -59,7 +56,6 @@ def init_game():
     st.session_state.level = 1
     st.session_state.grid = [["" for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
     place_objects()
-
 
 def place_objects():
     grid = st.session_state.grid
@@ -70,6 +66,7 @@ def place_objects():
             if grid[r][c] == "" and [r, c] != st.session_state.player_pos:
                 return r, c
 
+    # Place treasures, traps, and hearts
     for _ in range(3):
         r, c = random_empty_cell()
         grid[r][c] = "treasure"
@@ -80,9 +77,8 @@ def place_objects():
         r, c = random_empty_cell()
         grid[r][c] = "heart"
 
-
 # ----------------------------
-# MOVE PLAYER
+# PLAYER MOVEMENT
 # ----------------------------
 def move_player(direction):
     r, c = st.session_state.player_pos
@@ -96,7 +92,6 @@ def move_player(direction):
         c += 1
     st.session_state.player_pos = [r, c]
     check_cell(r, c)
-
 
 def check_cell(r, c):
     cell = st.session_state.grid[r][c]
@@ -112,12 +107,12 @@ def check_cell(r, c):
         st.session_state.score += 3
         st.session_state.grid[r][c] = ""
         st.toast("❤️ Health bonus!")
+    # Level up condition
     if st.session_state.score >= 30:
         st.session_state.level += 1
         st.session_state.score = 0
         st.toast("⭐ Level Up!")
         place_objects()
-
 
 # ----------------------------
 # DRAW GRID
@@ -140,7 +135,6 @@ def draw_grid():
             else:
                 cols[c].image(SPRITE_PATHS["fog"], use_container_width=True)
 
-
 # ----------------------------
 # STREAMLIT UI
 # ----------------------------
@@ -149,30 +143,34 @@ st.set_page_config(page_title="Treasure Hunt Game", layout="centered")
 st.title("🏝️ Treasure Hunt")
 st.markdown("Use the buttons to explore and find treasures!")
 
-if "player_pos" not in st.session_state:
+# ✅ Ensure session state exists before drawing
+if "grid" not in st.session_state or "player_pos" not in st.session_state:
     init_game()
 
 draw_grid()
 
 st.write(f"**Score:** {st.session_state.score} | **Level:** {st.session_state.level}")
 
-col1, col2, col3, col4 = st.columns(4)
-col1.button("⬆️ Up", on_click=move_player, args=("up",))
-col2.button("⬅️ Left", on_click=move_player, args=("left",))
-col3.button("➡️ Right", on_click=move_player, args=("right",))
-col4.button("⬇️ Down", on_click=move_player, args=("down",))
+col_up = st.columns([3, 1, 3])[1]
+col_left, col_down, col_right = st.columns(3)
+
+col_up.button("⬆️ Up", use_container_width=True, on_click=move_player, args=("up",))
+col_left.button("⬅️ Left", use_container_width=True, on_click=move_player, args=("left",))
+col_down.button("⬇️ Down", use_container_width=True, on_click=move_player, args=("down",))
+col_right.button("➡️ Right", use_container_width=True, on_click=move_player, args=("right",))
 
 st.divider()
 
 name = st.text_input("Enter your name to save score:")
 if st.button("💾 Save Highscore"):
-    if name:
-        save_highscore(name, st.session_state.score)
+    if name.strip():
+        save_highscore(name.strip(), st.session_state.score)
         st.success("Highscore saved!")
     else:
         st.warning("Please enter your name.")
 
 display_leaderboard()
+
 
 
 
