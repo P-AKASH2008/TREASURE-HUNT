@@ -1,421 +1,552 @@
-# app.py - Treasure Hunt (Option C: auto-scale tiles, no scrolling)
+# app.py
+# Pro TreasureHunt - single-file Streamlit app
+# Responsive layout (desktop / mobile), always-ticking timer, sprites + sounds + leaderboard
+
 import streamlit as st
-import random
-import json
 import os
+import json
+import random
 import time
-import base64
-import mimetypes
+from pathlib import Path
+from datetime import datetime
 
 # -------------------------
-# Basic page config
+# Config & paths
 # -------------------------
-st.set_page_config(page_title="Treasure Hunt", layout="wide")
+st.set_page_config(page_title="Treasure Hunt", page_icon="💎", layout="wide", initial_sidebar_state="auto")
 
-# -------------------------
-# Sprite files (local folder 'sprites/')
-# If missing, a small SVG placeholder will be used.
-# -------------------------
-SPRITE_FILES = {
-    "player": "sprites/player.png",
-    "treasure": "sprites/treasure.gif",
-    "heart": "sprites/heart.gif",
-    "trap": "sprites/trap.png",
-    "fog": "sprites/fog.png",
+BASE_DIR = Path(__file__).parent
+SPRITES_DIR = BASE_DIR / "sprites"
+SOUNDS_DIR = BASE_DIR / "sounds"
+HIGHSCORES_FILE = BASE_DIR / "highscores.json"
+
+# Files expected (adjust if you named differently)
+EXPECTED_SPRITES = {
+    "player": SPRITES_DIR / "player.png",
+    "treasure": SPRITES_DIR / "treasure.gif",
+    "coin": SPRITES_DIR / "coin.gif",
+    "heart": SPRITES_DIR / "heart.gif",
+    "rock": SPRITES_DIR / "rock.png",
+    "trap": SPRITES_DIR / "trap.png",
+    "fog": SPRITES_DIR / "fog.png",
+}
+EXPECTED_SOUNDS = {
+    "treasure": SOUNDS_DIR / "treasure.mp3",
+    "trap": SOUNDS_DIR / "trap.mp3",
+    "levelup": SOUNDS_DIR / "levelup.mp3",
+    # optional extra sounds can be added
 }
 
-HIGHSCORE_FILE = "highscores.json"
-
 # -------------------------
-# Helper to load file -> data URI
-# -------------------------
-def file_to_data_uri(path):
-    if not os.path.exists(path):
-        svg = (
-            "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'>"
-            "<rect width='100%' height='100%' fill='#ddd'/>"
-            "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='10' fill='#666'>missing</text>"
-            "</svg>"
-        )
-        return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
-    ctype, _ = mimetypes.guess_type(path)
-    if ctype is None:
-        ctype = "application/octet-stream"
-    with open(path, "rb") as f:
-        data = f.read()
-    return f"data:{ctype};base64," + base64.b64encode(data).decode()
-
-SPRITES = {k: file_to_data_uri(v) for k, v in SPRITE_FILES.items()}
-
-# -------------------------
-# Sidebar: user settings
-# -------------------------
-st.sidebar.title("⚙️ Game Settings")
-
-difficulty = st.sidebar.selectbox("Difficulty", ["Easy", "Normal", "Hard"], index=1)
-
-# If Hard, grid choice will be random; otherwise user can choose rows/cols
-user_rows = st.sidebar.selectbox("Rows (Easy/Normal)", [4, 6, 8, 12, 16], index=2)
-user_cols = st.sidebar.selectbox("Cols (Easy/Normal)", [4, 6, 8, 12, 16, 24, 32], index=2)
-
-HARD_GRID_CHOICES = [(8, 12), (12, 16), (16, 24), (16, 32)]
-
-sound_enabled = st.sidebar.checkbox("🔊 Sound (placeholder)", value=False)
-
-# Timer per difficulty
-TIME_BY_DIFFICULTY = {"Easy": 180, "Normal": 300, "Hard": 420}
-
-# Base counts
-BASE = {"TREASURES": 3, "TRAPS": 2, "HEARTS": 2, "MOVES": 25}
-DIFF_MULT = {"Easy": 0.9, "Normal": 1.0, "Hard": 1.25}[difficulty]
-
-# Visibility radius (Chebyshev)
-VIS_RADIUS = 2
-
-# -------------------------
-# Leaderboard helpers
+# Utility: load highscores
 # -------------------------
 def load_highscores():
-    if not os.path.exists(HIGHSCORE_FILE):
-        with open(HIGHSCORE_FILE, "w") as f:
-            json.dump([], f)
-    try:
-        with open(HIGHSCORE_FILE, "r") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    if HIGHSCORES_FILE.exists():
+        try:
+            with open(HIGHSCORES_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
 
-def save_highscore(name, score):
-    hs = load_highscores()
-    hs.append({"name": name, "score": score})
-    hs = sorted(hs, key=lambda x: x["score"], reverse=True)[:10]
-    with open(HIGHSCORE_FILE, "w") as f:
-        json.dump(hs, f, indent=2)
+def save_highscores(hs):
+    (HIGHSCORES_FILE.parent).mkdir(parents=True, exist_ok=True)
+    with open(HIGHSCORES_FILE, "w") as f:
+        json.dump(hs, f, indent=4)
+
+highscores = load_highscores()
 
 # -------------------------
-# Game functions
+# Settings (play with these)
 # -------------------------
-def choose_grid():
-    if difficulty == "Hard":
-        return random.choice(HARD_GRID_CHOICES)
-    return (user_rows, user_cols)
+GRID_SIZE_DESKTOP = 6  # desktop default
+GRID_SIZE_MOBILE = 5   # mobile default (smaller to fit viewport)
+TREASURE_COUNT = 3
+COIN_COUNT = 2
+HEART_COUNT = 1
+TRAP_COUNT = 3
+MAX_LIVES = 3
 
-def init_game(force=False):
+# -------------------------
+# Responsive CSS
+# - we scale tiles based on viewport width (vw) so grid fits on mobile
+# - mobile controls are made compact and always visible by limiting grid height
+# -------------------------
+RESPONSIVE_CSS = """
+<style>
+/* Root adjustments */
+.game-grid {
+  margin: 0 auto;
+}
+
+/* Buttons style (solid rounded) */
+.game-control {
+  background-color: #005f73;
+  color: #fff;
+  border: none;
+  padding: 12px 18px;
+  margin: 6px;
+  font-size: 18px;
+  border-radius: 12px;
+  box-shadow: 0 3px 0 rgba(0,0,0,0.15);
+}
+.game-control:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.12);
+}
+
+/* Mobile: compact controls container sticky bottom */
+@media (max-width: 799px) {
+  .stApp .mobile-controls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 8px;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    z-index: 9999;
+    background: linear-gradient(180deg, rgba(255,255,255,0.0), rgba(255,255,255,0.02));
+    padding: 6px 4px;
+  }
+  .stApp .mobile-controls .game-control {
+    padding: 10px 14px;
+    font-size: 16px;
+    margin: 4px;
+    border-radius: 10px;
+    opacity: 0.98;
+  }
+  /* reduce grid image sizes so it fits mobile height */
+  .stApp .game-tile img {
+    width: 9vw !important;
+    height: 9vw !important;
+  }
+}
+
+/* Desktop: place controls in right column - keep them visible */
+@media (min-width: 800px) {
+  .stApp .desktop-controls {
+    position: static;
+    padding: 8px;
+  }
+  .stApp .game-tile img {
+    width: 60px !important;
+    height: 60px !important;
+  }
+}
+
+/* Generic tile container size */
+.game-table {
+  border-collapse: collapse;
+  margin: 0 auto;
+}
+.game-table td {
+  width: 64px;
+  height: 64px;
+  text-align: center;
+  vertical-align: middle;
+  border: 1px solid rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.02);
+}
+.game-tile {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+</style>
+"""
+
+st.markdown(RESPONSIVE_CSS, unsafe_allow_html=True)
+
+# -------------------------
+# Check for expected files & warn if missing
+# -------------------------
+missing_sprites = [n for n,p in EXPECTED_SPRITES.items() if not p.exists()]
+missing_sounds = [n for n,p in EXPECTED_SOUNDS.items() if not p.exists()]
+
+if missing_sprites:
+    st.warning(f"Missing sprite files: {', '.join(missing_sprites)}. Place them in `sprites/` with correct names.")
+if missing_sounds:
+    st.info(f"Missing sound files (optional): {', '.join(missing_sounds)}. Place them in `sounds/` if you want SFX.")
+
+# -------------------------
+# Session state initialization
+# -------------------------
+if "player_pos" not in st.session_state:
+    st.session_state.player_pos = [0, 0]
+if "level" not in st.session_state:
+    st.session_state.level = 1
+if "score" not in st.session_state:
+    st.session_state.score = 0
+if "lives" not in st.session_state:
+    st.session_state.lives = MAX_LIVES
+if "grid_objects" not in st.session_state:
+    st.session_state.grid_objects = []  # list of dicts: {"type":..., "pos":[x,y]}
+if "revealed" not in st.session_state:
+    st.session_state.revealed = []
+if "move" not in st.session_state:
+    st.session_state.move = None
+if "start_time" not in st.session_state:
+    st.session_state.start_time = time.time()
+if "screen_mode" not in st.session_state:
+    st.session_state.screen_mode = "desktop"  # or mobile
+if "grid_size" not in st.session_state:
+    st.session_state.grid_size = GRID_SIZE_DESKTOP
+
+# -------------------------
+# Auto-detect small screens via a tiny HTML+JS component
+# - This sets a small query param on reload to pass viewport width.
+# - The component will run once per session (we use a key to avoid spamming)
+# -------------------------
+if "screen_probe_done" not in st.session_state:
+    probe_html = """
+    <script>
+    (function() {
+      const w = window.innerWidth || document.documentElement.clientWidth;
+      // call Streamlit by adding a query param and reloading (lightweight)
+      const params = new URLSearchParams(window.location.search);
+      params.set('vw', String(w));
+      const newUrl = window.location.pathname + '?' + params.toString();
+      if (!window.location.search.includes('vw=')) {
+        window.history.replaceState({}, '', newUrl);
+      }
+      // notify python by appending hidden element (session persists)
+      // we won't force reload to avoid rerun loops
+    })();
+    </script>
     """
-    Initialize session state. If force True, reinit even if keys exist.
-    """
-    # If already initialized and not forced, do nothing
-    if not force and "initialized" in st.session_state:
+    st.components.v1.html(probe_html, height=0, key="screen_probe")
+    st.session_state.screen_probe_done = True
+
+# Read viewport width (in query params) to set mobile/desktop mode
+try:
+    q = st.experimental_get_query_params()
+    if "vw" in q:
+        vw = int(q["vw"][0])
+        if vw < 800:
+            st.session_state.screen_mode = "mobile"
+            st.session_state.grid_size = GRID_SIZE_MOBILE
+        else:
+            st.session_state.screen_mode = "desktop"
+            st.session_state.grid_size = GRID_SIZE_DESKTOP
+except Exception:
+    # fallback defaults already set
+    pass
+
+GRID_SIZE = st.session_state.grid_size
+
+# -------------------------
+# Helper: play sound (safe)
+# -------------------------
+def play_sound(name):
+    path = EXPECTED_SOUNDS.get(name)
+    if path and path.exists() and st.session_state.get("sound_on", True):
+        try:
+            with open(path, "rb") as f:
+                audio_bytes = f.read()
+            st.audio(audio_bytes, format="audio/mp3")
+        except Exception:
+            # silently ignore audio errors
+            pass
+
+# -------------------------
+# Initialize grid objects (treasures, coins, hearts, traps)
+# -------------------------
+def regen_objects(level):
+    objects = []
+    def place(count, type_name):
+        for _ in range(count):
+            attempt = 0
+            while True:
+                attempt += 1
+                pos = [random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1)]
+                if pos != st.session_state.player_pos and pos not in [o["pos"] for o in objects]:
+                    objects.append({"type": type_name, "pos": pos})
+                    break
+                if attempt > 200:
+                    break
+    place(TREASURE_COUNT + level//2, "treasure")
+    place(COIN_COUNT + level//3, "coin")
+    place(HEART_COUNT, "heart")
+    place(TRAP_COUNT + level//2, "trap")
+    return objects
+
+if not st.session_state.grid_objects:
+    st.session_state.grid_objects = regen_objects(st.session_state.level)
+
+# revealed grid
+if not st.session_state.revealed or len(st.session_state.revealed) != GRID_SIZE:
+    st.session_state.revealed = [[False] * GRID_SIZE for _ in range(GRID_SIZE)]
+    st.session_state.revealed[0][0] = True
+
+# -------------------------
+# Movement helper
+# -------------------------
+def process_move(dx, dy):
+    x, y = st.session_state.player_pos
+    nx, ny = x + dx, y + dy
+    if not (0 <= nx < GRID_SIZE and 0 <= ny < GRID_SIZE):
         return
+    st.session_state.player_pos = [nx, ny]
+    st.session_state.revealed[nx][ny] = True
 
-    rows, cols = choose_grid()
-    st.session_state.rows = rows
-    st.session_state.cols = cols
-    st.session_state.grid = [["" for _ in range(cols)] for _ in range(rows)]
-    st.session_state.revealed = set()
+    # Check objects
+    for obj in st.session_state.grid_objects[:]:
+        if obj["pos"] == [nx, ny]:
+            t = obj["type"]
+            if t == "treasure":
+                st.session_state.score += 10
+                play_sound("treasure")
+                st.success("Treasure collected! +10")
+            elif t == "coin":
+                st.session_state.score += 5
+                play_sound("treasure")
+                st.info("Coin +5")
+            elif t == "heart":
+                st.session_state.score += 15
+                st.session_state.lives = min(MAX_LIVES, st.session_state.lives + 1)
+                play_sound("treasure")
+                st.success("Heart +15 and +1 life")
+            elif t == "trap":
+                st.session_state.score = max(0, st.session_state.score - 5)
+                st.session_state.lives -= 1
+                play_sound("trap")
+                st.error("Hit a trap! -5 and lost a life")
+            st.session_state.grid_objects.remove(obj)
+
+    # Level up if no treasures left
+    treasures_left = [o for o in st.session_state.grid_objects if o["type"] == "treasure"]
+    if not treasures_left:
+        st.session_state.level += 1
+        st.session_state.score += 20  # bonus
+        play_sound("levelup")
+        st.balloons()
+        st.info(f"Level up! Now level {st.session_state.level}")
+        st.session_state.grid_objects = regen_objects(st.session_state.level)
+
+# -------------------------
+# Handle move from session_state.move (set by buttons)
+# -------------------------
+if st.session_state.move:
+    m = st.session_state.move
+    if m == "up":
+        process_move(-1, 0)
+    elif m == "down":
+        process_move(1, 0)
+    elif m == "left":
+        process_move(0, -1)
+    elif m == "right":
+        process_move(0, 1)
+    st.session_state.move = None
+
+# -------------------------
+# Timer (Stopwatch) - always ticking
+# We store start_time in session_state and compute elapsed on each rerun.
+# To visually update every second we inject a tiny JS that triggers a self-refresh
+# by updating the URL query param with the current timestamp (lightweight).
+# -------------------------
+if "timer_auto_refresh" not in st.session_state:
+    st.session_state.timer_auto_refresh = True
+
+# Add a tiny invisible component to update query param timestamp every 1s to force rerun
+# NOTE: this is a harmless replaceState and won't create new history entries after the first call.
+tick_js = """
+<script>
+(function() {
+  const key = 'treasure_tick';
+  // Update the 't' query param with current seconds every 1s to force streamlit to re-evaluate query params.
+  setInterval(function(){
+    const params = new URLSearchParams(window.location.search);
+    params.set('t', Math.floor(Date.now()/1000));
+    const newurl = window.location.pathname + '?' + params.toString();
+    window.history.replaceState({}, '', newurl);
+  }, 1000);
+})();
+</script>
+"""
+# inject the script (hidden) - it only manipulates the URL, Streamlit reads the query params above on reruns
+st.components.v1.html(tick_js, height=0)
+
+# compute elapsed
+elapsed = int(time.time() - st.session_state.start_time)
+# Display timer in chosen place (we'll render it in the UI below)
+
+# -------------------------
+# Layout: main UI (responsive)
+# Desktop: two columns - grid (left) and controls+info (right)
+# Mobile: single column; grid scaled to viewport; controls placed below and fixed via CSS
+# -------------------------
+# Build leaderboard string for sidebar
+st.sidebar.title("Leaderboard (Top 10)")
+if highscores:
+    for idx, e in enumerate(sorted(highscores, key=lambda x: x["score"], reverse=True)[:10]):
+        st.sidebar.markdown(f"**{idx+1}. {e['name']}** — {e['score']} pts | Lv {e.get('level',1)} | {e.get('treasures_collected',0)} treasures | {e.get('date','-')}")
+else:
+    st.sidebar.write("No scores yet. Play and save your score!")
+
+# Sound toggle
+if "sound_on" not in st.session_state:
+    st.session_state.sound_on = True
+if st.sidebar.button("Toggle Sound"):
+    st.session_state.sound_on = not st.session_state.sound_on
+    st.sidebar.success("Sound ON" if st.session_state.sound_on else "Sound OFF")
+
+# Reset game controls
+st.sidebar.markdown("---")
+if st.sidebar.button("Reset Game"):
+    # reset core session state but keep highscores
+    st.session_state.player_pos = [0,0]
     st.session_state.score = 0
     st.session_state.level = 1
-    st.session_state.treasures = max(1, int(BASE["TREASURES"] * ((rows*cols) / 64) * DIFF_MULT))
-    st.session_state.traps = max(1, int(BASE["TRAPS"] * ((rows*cols) / 64) * DIFF_MULT))
-    st.session_state.hearts = max(0, int(BASE["HEARTS"] * ((rows*cols) / 64) * (0.9 if difficulty == "Hard" else 1.0)))
-    st.session_state.move_limit = max(5, int(BASE["MOVES"] * (64 / max(1, rows*cols)) * (1.15 if difficulty == "Easy" else (0.9 if difficulty == "Hard" else 1.0))))
-    st.session_state.moves_left = st.session_state.move_limit
-    st.session_state.time_limit = TIME_BY_DIFFICULTY[difficulty]
+    st.session_state.lives = MAX_LIVES
+    st.session_state.grid_objects = regen_objects(1)
+    st.session_state.revealed = [[False]*GRID_SIZE for _ in range(GRID_SIZE)]
+    st.session_state.revealed[0][0] = True
     st.session_state.start_time = time.time()
-    st.session_state.total_paused = 0.0
-    st.session_state.paused = False
-    st.session_state.pause_start = None
-    st.session_state.game_over = False
+    st.experimental_rerun()
 
-    # place objects then choose start position
-    place_objects()
-    empty = [(r, c) for r in range(rows) for c in range(cols) if st.session_state.grid[r][c] == ""]
-    st.session_state.player_pos = list(random.choice(empty)) if empty else [0, 0]
-    reveal_radius(st.session_state.player_pos[0], st.session_state.player_pos[1], VIS_RADIUS)
-    st.session_state.initialized = True
-    # store current config snapshot to detect changes (no infinite re-init)
-    st.session_state._config_snapshot = {"difficulty": difficulty, "rows": rows, "cols": cols}
+# Info header
+st.markdown("<h2 style='text-align:center;margin-bottom:6px'>Treasure Hunt</h2>", unsafe_allow_html=True)
 
-def place_objects():
-    rows = st.session_state.rows
-    cols = st.session_state.cols
-    grid = st.session_state.grid
-
-    def rand_empty():
-        attempts = 0
-        while True:
-            r = random.randint(0, rows - 1)
-            c = random.randint(0, cols - 1)
-            if grid[r][c] == "":
-                return r, c
-            attempts += 1
-            if attempts > rows * cols * 3:
-                for i in range(rows):
-                    for j in range(cols):
-                        if grid[i][j] == "":
-                            return i, j
-
-    for _ in range(st.session_state.treasures):
-        r, c = rand_empty()
-        grid[r][c] = "treasure"
-    for _ in range(st.session_state.traps):
-        r, c = rand_empty()
-        grid[r][c] = "trap"
-    for _ in range(st.session_state.hearts):
-        r, c = rand_empty()
-        grid[r][c] = "heart"
-
-def reveal_radius(r, c, radius):
-    rows = st.session_state.rows
-    cols = st.session_state.cols
-    for dr in range(-radius, radius + 1):
-        for dc in range(-radius, radius + 1):
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols:
-                st.session_state.revealed.add((nr, nc))
-
-def process_cell(r, c):
-    cell = st.session_state.grid[r][c]
-    if cell == "treasure":
-        st.session_state.score += 10
-        st.toast("💰 Treasure +10")
-    elif cell == "trap":
-        st.session_state.score = max(0, st.session_state.score - 5)
-        st.toast("💥 Trap -5")
-    elif cell == "heart":
-        st.session_state.score += 3
-        st.toast("❤️ Heart +3")
-    st.session_state.grid[r][c] = ""
-
-def move_player(direction):
-    if st.session_state.game_over or st.session_state.paused:
-        return
-    r, c = st.session_state.player_pos
-    rows = st.session_state.rows
-    cols = st.session_state.cols
-
-    if direction == "up" and r > 0:
-        r -= 1
-    elif direction == "down" and r < rows - 1:
-        r += 1
-    elif direction == "left" and c > 0:
-        c -= 1
-    elif direction == "right" and c < cols - 1:
-        c += 1
-    else:
-        return
-
-    st.session_state.player_pos = [r, c]
-    st.session_state.moves_left = max(0, st.session_state.moves_left - 1)
-    reveal_radius(r, c, VIS_RADIUS)
-    process_cell(r, c)
-
-    if st.session_state.moves_left <= 0:
-        st.session_state.game_over = True
-        st.toast("🚨 Out of moves! Game over.")
-
-def toggle_pause():
-    if st.session_state.game_over:
-        return
-    if not st.session_state.paused:
-        st.session_state.paused = True
-        st.session_state.pause_start = time.time()
-    else:
-        paused_for = time.time() - (st.session_state.pause_start or time.time())
-        st.session_state.total_paused += paused_for
-        st.session_state.pause_start = None
-        st.session_state.paused = False
-
-def restart_game():
-    # force re-init to pick new random grid in Hard, etc.
-    init_game(force=True)
+# layout columns for desktop; single column stacks on narrow screens automatically
+if st.session_state.screen_mode == "desktop":
+    left_col, right_col = st.columns([3,1])
+else:
+    # mobile: grid full width, controls below
+    left_col = st.container()
+    right_col = st.container()
 
 # -------------------------
-# Grid drawing (Option C auto-scaling)
-# Use CSS grid and data URIs to avoid heavy Streamlit columns calls
+# Render Grid in left_col
 # -------------------------
-def compute_tile_size(rows, cols, max_area_px=520):
-    """Return tile_size px based on largest dimension (Option C mapping)."""
-    max_dim = max(rows, cols)
-    # mapping (C strategy): chunky for small grids, compact for large
-    if max_dim <= 4:
-        return min(140, int(max_area_px / max_dim))
-    if max_dim <= 8:
-        return min(100, int(max_area_px / max_dim))
-    if max_dim <= 12:
-        return min(72, int(max_area_px / max_dim))
-    if max_dim <= 16:
-        return min(48, int(max_area_px / max_dim))
-    if max_dim <= 24:
-        return min(34, int(max_area_px / max_dim))
-    return max(16, int(max_area_px / max_dim))
+with left_col:
+    # show stats and timer above the grid
+    st.markdown(f"**Level:** {st.session_state.level}  &nbsp;&nbsp; **Score:** {st.session_state.score}  &nbsp;&nbsp; **Lives:** {st.session_state.lives}")
+    st.markdown(f"⏱️ **Time:** `{elapsed} sec`")
 
-def draw_grid():
-    rows = st.session_state.rows
-    cols = st.session_state.cols
-    grid = st.session_state.grid
-    pr, pc = st.session_state.player_pos
-
-    tile_size = compute_tile_size(rows, cols, max_area_px=520)
-    container_w = tile_size * cols + (cols - 1) * 3
-    container_h = tile_size * rows + (rows - 1) * 3
-
-    st.markdown(
-        f"""
-        <style>
-            .game-grid {{
-                display: grid;
-                grid-template-columns: repeat({cols}, {tile_size}px);
-                grid-template-rows: repeat({rows}, {tile_size}px);
-                gap: 3px;
-                margin-left: auto;
-                margin-right: auto;
-                width: {container_w}px;
-                height: {container_h}px;
-                overflow: hidden;
-            }}
-            .cell img {{
-                width: {tile_size}px;
-                height: {tile_size}px;
-                object-fit: cover;
-                display:block;
-                border-radius: 4px;
-            }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    html = "<div class='game-grid'>"
-    for r in range(rows):
-        for c in range(cols):
-            pos = (r, c)
-            # If paused (C1) hide except player's tile
-            if st.session_state.paused and pos != tuple(st.session_state.player_pos):
-                img_uri = SPRITES["fog"]
-            else:
-                if pos == tuple(st.session_state.player_pos):
-                    img_uri = SPRITES["player"]
+    # build HTML table grid with responsive tile sizing (CSS above handles mobile)
+    table_html = "<table class='game-table' style='border-collapse: collapse;'>"
+    for i in range(GRID_SIZE):
+        table_html += "<tr>"
+        for j in range(GRID_SIZE):
+            table_html += "<td class='game-tile'>"
+            # choose content
+            content = ""
+            # player
+            if st.session_state.player_pos == [i,j]:
+                if EXPECTED_SPRITES["player"].exists():
+                    p = EXPECTED_SPRITES["player"].as_posix()
+                    content = f"<img src='{p}' style='max-width:100%;height:auto;'/>"
                 else:
-                    if pos in st.session_state.revealed:
-                        tile = grid[r][c]
-                        img_uri = SPRITES.get(tile, SPRITES["fog"])
+                    content = "🙂"
+            # unrevealed fog
+            elif not st.session_state.revealed[i][j]:
+                if EXPECTED_SPRITES["fog"].exists():
+                    f = EXPECTED_SPRITES["fog"].as_posix()
+                    content = f"<img src='{f}' style='max-width:100%;height:auto;'/>"
+                else:
+                    content = " "
+            else:
+                # revealed: check if object present
+                obj = next((o for o in st.session_state.grid_objects if o["pos"] == [i,j]), None)
+                if obj:
+                    typ = obj["type"]
+                    sprite_path = EXPECTED_SPRITES.get(typ)
+                    if sprite_path and sprite_path.exists():
+                        content = f"<img src='{sprite_path.as_posix()}' style='max-width:100%;height:auto;'/>"
                     else:
-                        img_uri = SPRITES["fog"]
-            html += f"<div class='cell'><img src='{img_uri}' alt='cell'/></div>"
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+                        # fallback text icons
+                        fallback = {"treasure":"💎","coin":"🪙","heart":"❤️","trap":"💀"}
+                        content = fallback.get(typ, "?")
+                else:
+                    content = ""  # empty revealed
+            # Wrap each tile in a clickable form that posts back via simple anchor hack:
+            # We'll use a simple query param to indicate a tile click (so we can handle tile-based movement later if needed)
+            # But for mobile/desktop controls we rely on arrow buttons (so this is only decorative)
+            table_html += content
+            table_html += "</td>"
+        table_html += "</tr>"
+    table_html += "</table>"
+
+    st.components.v1.html(f"<div class='game-grid'>{table_html}</div>", height=(GRID_SIZE * 72))
 
 # -------------------------
-# Initialization: only when needed to avoid rerun loops
+# Controls & info in right_col (desktop) or below (mobile)
 # -------------------------
-# If not yet initialized, init
-if "initialized" not in st.session_state:
-    init_game()
+controls_container = right_col
 
-# If config changed (difficulty or user selection for non-Hard), re-init once
-current_snapshot = {"difficulty": difficulty}
-if difficulty != "Hard":
-    current_snapshot.update({"rows": user_rows, "cols": user_cols})
-else:
-    # Hard: snapshot does not include rows/cols (they're chosen randomly each new init)
-    current_snapshot.update({"rows": st.session_state.rows, "cols": st.session_state.cols})
+with controls_container:
+    if st.session_state.screen_mode == "desktop":
+        st.markdown("<div class='desktop-controls'>", unsafe_allow_html=True)
+        st.markdown("### Controls")
+        # Desktop: place arrow buttons in 3x3 layout using columns
+        c1, c2, c3 = st.columns([1,1,1])
+        with c1:
+            if st.button("⭠", key="left_btn", help="Move left", on_click=None):
+                st.session_state.move = "left"
+        with c2:
+            if st.button("⭡", key="up_btn", help="Move up"):
+                st.session_state.move = "up"
+        with c3:
+            if st.button("⭢", key="right_btn", help="Move right"):
+                st.session_state.move = "right"
+        c4, c5, c6 = st.columns([1,1,1])
+        with c4:
+            st.write("")
+        with c5:
+            if st.button("⭣", key="down_btn", help="Move down"):
+                st.session_state.move = "down"
+        with c6:
+            st.write("")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-if st.session_state.get("_config_snapshot") != current_snapshot:
-    # If user changed difficulty or dimensions, reinit (force)
-    init_game(force=True)
+    else:
+        # Mobile: compact controls will be drawn below but CSS makes them sticky at bottom
+        st.markdown("<div class='mobile-controls'>", unsafe_allow_html=True)
+        # create 4 inline buttons
+        # NOTE: When many streamlit elements are present, mobile sticky might overlap content.
+        col_l, col_u, col_d, col_r = st.columns([1,1,1,1])
+        with col_l:
+            if st.button("⭠", key="m_left"):
+                st.session_state.move = "left"
+        with col_u:
+            if st.button("⭡", key="m_up"):
+                st.session_state.move = "up"
+        with col_d:
+            if st.button("⭣", key="m_down"):
+                st.session_state.move = "down"
+        with col_r:
+            if st.button("⭢", key="m_right"):
+                st.session_state.move = "right"
+        st.markdown("</div>", unsafe_allow_html=True)
 
-st.session_state["_config_snapshot"] = current_snapshot
+    # Extra info & Game Over / Save Score
+    st.markdown("---")
+    st.markdown("#### Game Info")
+    st.markdown(f"- **Score:** {st.session_state.score}")
+    st.markdown(f"- **Level:** {st.session_state.level}")
+    st.markdown(f"- **Lives:** {st.session_state.lives}")
+    st.markdown(f"- **Elapsed:** {elapsed} sec")
 
-# Update time limit in session (in case difficulty changed)
-st.session_state.time_limit = TIME_BY_DIFFICULTY[difficulty]
-
-# -------------------------
-# Timer accounting (pauses included). When time_left == 0 => Game Over
-# -------------------------
-if st.session_state.paused and st.session_state.pause_start is not None:
-    elapsed = st.session_state.pause_start - st.session_state.start_time - st.session_state.total_paused
-else:
-    elapsed = time.time() - st.session_state.start_time - st.session_state.total_paused
-
-time_left = max(0, int(st.session_state.time_limit - elapsed))
-if time_left == 0 and not st.session_state.game_over:
-    st.session_state.game_over = True
-    st.toast("⏳ Time's up! Game over.")
-
-# -------------------------
-# UI layout
-# -------------------------
-col_left, col_right = st.columns([3, 1])
-
-with col_left:
-    st.title("🏝️ Treasure Hunt")
-    st.caption(f"Grid: {st.session_state.rows}×{st.session_state.cols}  •  Difficulty: {difficulty}")
-    draw_grid()
-    # legend under grid
-    st.markdown(
-        "<div style='display:flex;gap:10px;align-items:center;margin-top:8px'>"
-        f"<div>Player <img src='{SPRITES['player']}' style='height:20px;vertical-align:middle'></div>"
-        f"<div>Treasure <img src='{SPRITES['treasure']}' style='height:20px;vertical-align:middle'></div>"
-        f"<div>Trap <img src='{SPRITES['trap']}' style='height:20px;vertical-align:middle'></div>"
-        f"<div>Heart <img src='{SPRITES['heart']}' style='height:20px;vertical-align:middle'></div>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-with col_right:
-    st.subheader("Controls")
-    pause_label = "▶️ Resume" if st.session_state.paused else "⏸ Pause"
-    if st.button(pause_label):
-        toggle_pause()
-    if st.button("🔁 Restart"):
-        restart_game()
-
-    st.write("---")
-    if st.session_state.game_over:
-        st.warning("Game Over — press Restart to play again.")
-    elif st.session_state.paused:
-        st.info("Paused — only current tile visible; timer frozen.")
-
-    st.button("⬆️ Up", on_click=move_player, args=("up",))
-    c1, c2 = st.columns(2)
-    c1.button("⬅️ Left", on_click=move_player, args=("left",))
-    c2.button("➡️ Right", on_click=move_player, args=("right",))
-    st.button("⬇️ Down", on_click=move_player, args=("down",))
-
-    st.write("---")
-    st.metric("🕒 Time Left", f"{time_left}s")
-    st.metric("🎯 Moves Left", st.session_state.moves_left)
-    st.metric("⭐ Score", st.session_state.score)
-
-    st.write("---")
-    name = st.text_input("Enter name to save score:")
-    if st.button("💾 Save Highscore"):
-        if name.strip():
-            save_highscore(name.strip(), st.session_state.score)
-            st.success("Saved to leaderboard.")
-        else:
-            st.warning("Enter a name before saving.")
-
-# -------------------------
-# Sidebar summary & leaderboard
-# -------------------------
-st.sidebar.title("🏆 Leaderboard")
-hs = load_highscores()
-if hs:
-    for i, e in enumerate(hs, 1):
-        st.sidebar.write(f"**{i}. {e['name']}** — {e['score']} pts")
-else:
-    st.sidebar.info("No highscores yet.")
-
-st.sidebar.write("---")
-st.sidebar.write(f"Mode: {difficulty}")
-st.sidebar.write(f"Grid: {st.session_state.rows}×{st.session_state.cols}")
-st.sidebar.write(f"Treasures: {st.session_state.treasures}  Traps: {st.session_state.traps}  Hearts: {st.session_state.hearts}")
-st.sidebar.write(f"Moves: {st.session_state.move_limit}")
-st.sidebar.write(f"Timer: {st.session_state.time_limit}s (Easy=180s, Normal=300s, Hard=420s)")
-st.sidebar.write("Visibility: Chebyshev radius 2 (5×5) — permanently revealed")
-st.sidebar.write("Pause: hides tiles except your current tile; timer frozen while paused")
-
-st.write("---")
-st.info("Tip: Player spawns on a random safe tile (not on treasure/trap/heart). Use Restart to reshuffle grid (Hard picks a random large grid).")
+    # Save score form (always available)
+    with st.form("save_score_form", clear_on_submit=False):
+        name = st.text_input("Enter name to save score", value="")
+        submitted = st.form_submit_button("Save Score")
+        if submitted:
+            if name.strip():
+                new = {
+                    "name": name.strip(),
+                    "score": st.session_state.score,
+                    "level": st.session_state.level,
+                    "treasures_collected": sum(1 for o in st.session_state.grid_objects if o["type"] in ["treasure","coin","heart"]) ,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                }
+                highscores.append(new)
+                highscores.sort(key=lambda x: x["score"], reverse=True)
+                highscores[:] = highscores[:10]
+                save_highscores(highscores)
+                st.success("Saved to leaderboard!")
+            else:
+        
