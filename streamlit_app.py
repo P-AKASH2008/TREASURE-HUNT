@@ -1,11 +1,10 @@
 # streamlit_app.py
-# TreasureHunt - responsive Streamlit app
-# - Use this file name exactly for deployment
-# - Place sprites/ and sounds/ in same repo root
-# - highscores.json will be created/updated automatically
+# Treasure Hunt - corrected version
+# - Removes invalid key param to st.components.v1.html()
+# - Sounds OFF by default and safe if files missing
+# - Responsive mobile/desktop layout, ticking timer, leaderboard
 
 import streamlit as st
-import os
 import json
 import random
 import time
@@ -13,18 +12,17 @@ from pathlib import Path
 from datetime import datetime
 
 # -------------------------
-# Page config
+# Config
 # -------------------------
 st.set_page_config(page_title="Treasure Hunt", page_icon="💎", layout="wide")
+st.set_option("client.showErrorDetails", True)  # show full error traces
 
-BASE_DIR = Path(__file__).parent
-SPRITES_DIR = BASE_DIR / "sprites"
-SOUNDS_DIR = BASE_DIR / "sounds"
-HIGHSCORES_FILE = BASE_DIR / "highscores.json"
+BASE = Path(__file__).parent
+SPRITES_DIR = BASE / "sprites"
+SOUNDS_DIR = BASE / "sounds"
+HIGHSCORES = BASE / "highscores.json"
 
-# -------------------------
-# Expected assets (names must match)
-# -------------------------
+# Expected filenames (adjust if different)
 EXPECTED_SPRITES = {
     "player": SPRITES_DIR / "player.png",
     "treasure": SPRITES_DIR / "treasure.gif",
@@ -41,27 +39,27 @@ EXPECTED_SOUNDS = {
 }
 
 # -------------------------
-# Load highscores safely
+# Highscores load/save
 # -------------------------
 def load_highscores():
-    if HIGHSCORES_FILE.exists():
+    if HIGHSCORES.exists():
         try:
-            return json.loads(HIGHSCORES_FILE.read_text(encoding="utf-8"))
+            return json.loads(HIGHSCORES.read_text(encoding="utf-8"))
         except Exception:
             return []
     return []
 
 def save_highscores(data):
-    HIGHSCORES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    HIGHSCORES_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    HIGHSCORES.parent.mkdir(parents=True, exist_ok=True)
+    HIGHSCORES.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 highscores = load_highscores()
 
 # -------------------------
 # Game settings
 # -------------------------
-GRID_SIZE_DESKTOP = 6
-GRID_SIZE_MOBILE = 5
+GRID_DESKTOP = 6
+GRID_MOBILE = 5
 TREASURE_COUNT = 3
 COIN_COUNT = 2
 HEART_COUNT = 1
@@ -69,7 +67,7 @@ TRAP_COUNT = 3
 MAX_LIVES = 3
 
 # -------------------------
-# Responsive CSS & mobile sticky controls
+# CSS for responsive layout and controls
 # -------------------------
 CSS = """
 <style>
@@ -105,46 +103,32 @@ CSS = """
 st.markdown(CSS, unsafe_allow_html=True)
 
 # -------------------------
-# Check for missing assets
-# -------------------------
-missing_sprites = [k for k,v in EXPECTED_SPRITES.items() if not v.exists()]
-missing_sounds = [k for k,v in EXPECTED_SOUNDS.items() if not v.exists()]
-
-if missing_sprites:
-    st.warning("Missing sprite files: " + ", ".join(missing_sprites) + ". Put them in /sprites/ with exact names.")
-if missing_sounds:
-    st.info("Missing sound files (optional): " + ", ".join(missing_sounds) + " — place in /sounds/")
-
-# -------------------------
 # Session state initialization
 # -------------------------
-if "player_pos" not in st.session_state:
-    st.session_state.player_pos = [0, 0]
-if "level" not in st.session_state:
-    st.session_state.level = 1
-if "score" not in st.session_state:
-    st.session_state.score = 0
-if "lives" not in st.session_state:
-    st.session_state.lives = MAX_LIVES
-if "grid_objects" not in st.session_state:
-    st.session_state.grid_objects = []
-if "revealed" not in st.session_state:
-    st.session_state.revealed = []
-if "move" not in st.session_state:
-    st.session_state.move = None
-if "start_time" not in st.session_state:
-    st.session_state.start_time = time.time()
-if "screen_mode" not in st.session_state:
-    st.session_state.screen_mode = "desktop"
-if "grid_size" not in st.session_state:
-    st.session_state.grid_size = GRID_SIZE_DESKTOP
-if "sound_on" not in st.session_state:
-    st.session_state.sound_on = True
+defaults = {
+    "player_pos": [0, 0],
+    "level": 1,
+    "score": 0,
+    "lives": MAX_LIVES,
+    "grid_objects": [],
+    "revealed": [],
+    "move": None,
+    "start_time": time.time(),
+    "sound_on": False,    # OFF by default
+    "screen_probe_done": False,
+    "screen_mode": "desktop",
+    "grid_size": GRID_DESKTOP,
+}
+
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # -------------------------
-# Screen probe (put viewport width in query param once)
+# Small JS probe to set viewport width into query param (only once)
+# NOTE: Do NOT pass invalid kwargs to st.components.v1.html()
 # -------------------------
-if "screen_probe_done" not in st.session_state:
+if not st.session_state.screen_probe_done:
     probe_js = """
     <script>
     (function(){
@@ -153,66 +137,48 @@ if "screen_probe_done" not in st.session_state:
       params.set('vw', String(w));
       const newUrl = window.location.pathname + '?' + params.toString();
       if (!window.location.search.includes('vw=')) {
-         window.history.replaceState({}, '', newUrl);
+        window.history.replaceState({}, '', newUrl);
       }
     })();
     </script>
     """
-    st.components.v1.html(probe_js, height=0, key="probe")
+    # do not pass key= or other invalid kwargs
+    st.components.v1.html(probe_js, height=0)
     st.session_state.screen_probe_done = True
 
-# Read query param to set mobile/desktop
+# read viewport width from query params
 try:
     qp = st.experimental_get_query_params()
     if "vw" in qp:
         vw = int(qp["vw"][0])
         if vw < 800:
             st.session_state.screen_mode = "mobile"
-            st.session_state.grid_size = GRID_SIZE_MOBILE
+            st.session_state.grid_size = GRID_MOBILE
         else:
             st.session_state.screen_mode = "desktop"
-            st.session_state.grid_size = GRID_SIZE_DESKTOP
+            st.session_state.grid_size = GRID_DESKTOP
 except Exception:
     pass
 
 GRID_SIZE = st.session_state.grid_size
 
 # -------------------------
-# Ticking clock (stopwatch)
-# We will force light refresh using an injected JS that updates query param 't' every second.
-# -------------------------
-tick_js = """
-<script>
-(function() {
-  setInterval(function(){
-    try {
-      const params = new URLSearchParams(window.location.search);
-      params.set('t', Math.floor(Date.now()/1000));
-      const newurl = window.location.pathname + '?' + params.toString();
-      window.history.replaceState({}, '', newurl);
-    } catch(e) {}
-  }, 1000);
-})();
-</script>
-"""
-st.components.v1.html(tick_js, height=0)
-
-elapsed = int(time.time() - st.session_state.start_time)
-
-# -------------------------
-# Sound play helper
+# Safe sound player (does nothing if sound_off or files missing)
 # -------------------------
 def play_sound(name):
-    p = EXPECTED_SOUNDS.get(name)
-    if p and p.exists() and st.session_state.sound_on:
-        try:
-            with open(p, "rb") as f:
-                st.audio(f.read(), format="audio/mp3")
-        except Exception:
-            pass
+    if not st.session_state.sound_on:
+        return
+    path = EXPECTED_SOUNDS.get(name)
+    if not path or not path.exists():
+        return
+    try:
+        with open(path, "rb") as f:
+            st.audio(f.read(), format="audio/mp3")
+    except Exception:
+        pass
 
 # -------------------------
-# Object placement
+# Object generation
 # -------------------------
 def regen_objects(level):
     objs = []
@@ -222,8 +188,7 @@ def regen_objects(level):
             while True:
                 tries += 1
                 pos = [random.randint(0, GRID_SIZE-1), random.randint(0, GRID_SIZE-1)]
-                occupied = pos == st.session_state.player_pos or pos in [o["pos"] for o in objs]
-                if not occupied:
+                if pos != st.session_state.player_pos and pos not in [o["pos"] for o in objs]:
                     objs.append({"type": typ, "pos": pos})
                     break
                 if tries > 200:
@@ -242,7 +207,28 @@ if not st.session_state.revealed or len(st.session_state.revealed) != GRID_SIZE:
     st.session_state.revealed[0][0] = True
 
 # -------------------------
-# Movement logic
+# Ticking timer: inject JS that updates query param every second
+# -------------------------
+tick_js = """
+<script>
+(function() {
+  setInterval(function(){
+    try {
+      const params = new URLSearchParams(window.location.search);
+      params.set('t', Math.floor(Date.now()/1000));
+      const newurl = window.location.pathname + '?' + params.toString();
+      window.history.replaceState({}, '', newurl);
+    } catch(e){}
+  }, 1000);
+})();
+</script>
+"""
+st.components.v1.html(tick_js, height=0)
+
+elapsed = int(time.time() - st.session_state.start_time)
+
+# -------------------------
+# Movement processing
 # -------------------------
 def process_move(dx, dy):
     x, y = st.session_state.player_pos
@@ -252,31 +238,30 @@ def process_move(dx, dy):
     st.session_state.player_pos = [nx, ny]
     st.session_state.revealed[nx][ny] = True
 
-    # check objects
     for obj in st.session_state.grid_objects[:]:
         if obj["pos"] == [nx, ny]:
-            typ = obj["type"]
-            if typ == "treasure":
+            t = obj["type"]
+            if t == "treasure":
                 st.session_state.score += 10
                 play_sound("treasure")
                 st.success("Treasure +10")
-            elif typ == "coin":
+            elif t == "coin":
                 st.session_state.score += 5
                 play_sound("treasure")
                 st.info("Coin +5")
-            elif typ == "heart":
+            elif t == "heart":
                 st.session_state.score += 15
                 st.session_state.lives = min(MAX_LIVES, st.session_state.lives + 1)
                 play_sound("treasure")
-                st.success("Heart +15, +1 life")
-            elif typ == "trap":
+                st.success("Heart +15 and +1 life")
+            elif t == "trap":
                 st.session_state.score = max(0, st.session_state.score - 5)
                 st.session_state.lives -= 1
                 play_sound("trap")
                 st.error("Hit a trap! -5 and lost a life")
             st.session_state.grid_objects.remove(obj)
 
-    # level up condition
+    # level up
     treasures_left = [o for o in st.session_state.grid_objects if o["type"] == "treasure"]
     if not treasures_left:
         st.session_state.level += 1
@@ -286,40 +271,44 @@ def process_move(dx, dy):
         st.info(f"Level up! Now level {st.session_state.level}")
         st.session_state.grid_objects = regen_objects(st.session_state.level)
 
-# handle queued move (set by buttons)
+# apply queued move from buttons
 if st.session_state.move:
-    move_cmd = st.session_state.move
-    if move_cmd == "up":
+    m = st.session_state.move
+    if m == "up":
         process_move(-1, 0)
-    elif move_cmd == "down":
+    elif m == "down":
         process_move(1, 0)
-    elif move_cmd == "left":
+    elif m == "left":
         process_move(0, -1)
-    elif move_cmd == "right":
+    elif m == "right":
         process_move(0, 1)
     else:
         pass
     st.session_state.move = None
 
 # -------------------------
-# UI layout
+# Sidebar: leaderboard + sound toggle + reset
 # -------------------------
-# Sidebar leaderboard & controls
-st.sidebar.title("Leaderboard (Top 10)")
+st.sidebar.title("Leaderboard")
 if highscores:
     for i, e in enumerate(sorted(highscores, key=lambda x: x["score"], reverse=True)[:10]):
-        st.sidebar.markdown(f"**{i+1}. {e['name']}** — {e['score']} pts | Lv {e.get('level',1)} | {e.get('treasures_collected',0)} items | {e.get('date','-')}")
+        st.sidebar.markdown(f"**{i+1}. {e['name']}** — {e['score']} pts | Lv {e.get('level',1)} | {e.get('treasures_collected',0)} treasures | {e.get('date','-')}")
 else:
-    st.sidebar.write("No highscores yet. Be the first!")
+    st.sidebar.write("No highscores yet")
 
-if st.sidebar.button("Toggle Sound"):
-    st.session_state.sound_on = not st.session_state.sound_on
-    st.sidebar.success("Sound ON" if st.session_state.sound_on else "Sound OFF")
+# sound icon toggle
+if st.session_state.sound_on:
+    if st.sidebar.button("🔊 Sound ON (tap to mute)"):
+        st.session_state.sound_on = False
+else:
+    if st.sidebar.button("🔇 Sound OFF (tap to unmute)"):
+        st.session_state.sound_on = True
 
+# Reset
 if st.sidebar.button("Reset Game"):
-    st.session_state.player_pos = [0,0]
-    st.session_state.score = 0
+    st.session_state.player_pos = [0, 0]
     st.session_state.level = 1
+    st.session_state.score = 0
     st.session_state.lives = MAX_LIVES
     st.session_state.grid_objects = regen_objects(1)
     st.session_state.revealed = [[False]*GRID_SIZE for _ in range(GRID_SIZE)]
@@ -327,25 +316,28 @@ if st.sidebar.button("Reset Game"):
     st.session_state.start_time = time.time()
     st.experimental_rerun()
 
-# Header
-st.markdown("<h2 style='text-align:center;margin-bottom:6px'>Treasure Hunt</h2>", unsafe_allow_html=True)
+# -------------------------
+# Main UI
+# -------------------------
+st.markdown("<h2 style='text-align:center;margin:6px 0'>Treasure Hunt</h2>", unsafe_allow_html=True)
 
-# Columns: desktop left grid and right controls, mobile stacked
+# choose layout
 if st.session_state.screen_mode == "desktop":
     left_col, right_col = st.columns([3,1])
 else:
     left_col = st.container()
     right_col = st.container()
 
-# Grid render (HTML table)
+# Grid render
 with left_col:
-    st.markdown(f"**Level:** {st.session_state.level}  •  **Score:** {st.session_state.score}  •  **Lives:** {st.session_state.lives}")
-    st.markdown(f"⏱ **Time:** `{elapsed} s`")
-    table = "<table class='game-table'>"
+    st.markdown(f"**Level:** {st.session_state.level}  &nbsp;&nbsp; **Score:** {st.session_state.score}  &nbsp;&nbsp; **Lives:** {st.session_state.lives}")
+    st.markdown(f"⏱ **Time:** `{elapsed} sec`")
+
+    table_html = "<table class='game-table'>"
     for i in range(GRID_SIZE):
-        table += "<tr>"
+        table_html += "<tr>"
         for j in range(GRID_SIZE):
-            table += "<td class='game-tile'>"
+            table_html += "<td class='game-tile'>"
             content = ""
             if st.session_state.player_pos == [i,j]:
                 if EXPECTED_SPRITES["player"].exists():
@@ -369,14 +361,14 @@ with left_col:
                         content = fallback.get(typ, "?")
                 else:
                     content = ""
-            table += content
-            table += "</td>"
-        table += "</tr>"
-    table += "</table>"
+            table_html += content
+            table_html += "</td>"
+        table_html += "</tr>"
+    table_html += "</table>"
 
-    st.components.v1.html(f"<div class='game-grid'>{table}</div>", height=(GRID_SIZE * 72))
+    st.components.v1.html(f"<div class='game-grid'>{table_html}</div>", height=(GRID_SIZE * 72))
 
-# Controls and info
+# Controls & info
 with right_col:
     if st.session_state.screen_mode == "desktop":
         st.markdown("### Controls")
@@ -391,15 +383,10 @@ with right_col:
             if st.button("⭢", key="right_btn"):
                 st.session_state.move = "right"
         c4, c5, c6 = st.columns([1,1,1])
-        with c4:
-            st.write("")
         with c5:
             if st.button("⭣", key="down_btn"):
                 st.session_state.move = "down"
-        with c6:
-            st.write("")
     else:
-        # mobile-sticky controls container (CSS makes it fixed at bottom)
         st.markdown("<div class='mobile-controls'>", unsafe_allow_html=True)
         mcols = st.columns([1,1,1,1])
         with mcols[0]:
@@ -421,16 +408,16 @@ with right_col:
     st.write(f"- Score: {st.session_state.score}")
     st.write(f"- Level: {st.session_state.level}")
     st.write(f"- Lives: {st.session_state.lives}")
-    st.write(f"- Elapsed: {elapsed} s")
+    st.write(f"- Elapsed: {elapsed} sec")
 
     # Save score form
-    with st.form("save_form"):
-        pname = st.text_input("Name to save score:", value="")
+    with st.form("save_score_form"):
+        name = st.text_input("Enter your name:")
         submitted = st.form_submit_button("Save Score")
         if submitted:
-            if pname.strip():
+            if name.strip():
                 entry = {
-                    "name": pname.strip(),
+                    "name": name.strip(),
                     "score": st.session_state.score,
                     "level": st.session_state.level,
                     "treasures_collected": sum(1 for o in st.session_state.grid_objects if o["type"] in ["treasure","coin","heart"]),
@@ -442,12 +429,12 @@ with right_col:
                 save_highscores(highscores)
                 st.success("Saved to leaderboard!")
             else:
-                st.error("Please enter a name.")
+                st.error("Enter a name before saving.")
 
 # Game over message
 if st.session_state.lives <= 0:
-    st.error("Game Over — you lost all lives. Use Reset Game in sidebar to restart.")
+    st.error("Game Over — you lost all lives. Use Reset Game in the sidebar to restart.")
 
 # Footer
 st.markdown("<hr />", unsafe_allow_html=True)
-st.markdown("<small>Tip: On mobile the grid auto-scales so controls remain visible. Add sprites and sounds to /sprites and /sounds folders.</small>", unsafe_allow_html=True)
+st.markdown("<small>Tip: On mobile the grid auto-scales. Add sprites & sounds to /sprites and /sounds folders.</small>", unsafe_allow_html=True)
