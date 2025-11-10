@@ -1,21 +1,19 @@
 import streamlit as st
 import random
-import time
 import json
+import time
 from pathlib import Path
 
-# ------------------------------------------------------
-# CONFIG
-# ------------------------------------------------------
-st.set_page_config(page_title="Treasure Hunt", page_icon="💎", layout="wide")
+st.set_page_config(page_title="Treasure Hunt Ninja", page_icon="🥷", layout="wide")
 
 GRID = 6
 MAX_LIVES = 3
+
 HIGHSCORE_FILE = Path("highscores.json")
 
-# ------------------------------------------------------
-# HIGH SCORE MANAGEMENT
-# ------------------------------------------------------
+# -------------------------
+# Load / Save highscores
+# -------------------------
 def load_scores():
     if HIGHSCORE_FILE.exists():
         try:
@@ -24,16 +22,15 @@ def load_scores():
             return []
     return []
 
-
 def save_scores(data):
     HIGHSCORE_FILE.write_text(json.dumps(data, indent=4))
 
 
 scores = load_scores()
 
-# ------------------------------------------------------
-# SESSION STATE INIT
-# ------------------------------------------------------
+# -------------------------
+# Session defaults
+# -------------------------
 defaults = {
     "player": [0, 0],
     "revealed": [[False]*GRID for _ in range(GRID)],
@@ -41,48 +38,46 @@ defaults = {
     "lives": MAX_LIVES,
     "score": 0,
     "level": 1,
-    "move": None,
     "start": time.time(),
 }
 
-for key, value in defaults.items():
+for key, val in defaults.items():
     if key not in st.session_state:
-        st.session_state[key] = value
+        st.session_state[key] = val
 
-st.session_state["revealed"][0][0] = True  # reveal start tile
+st.session_state.revealed[0][0] = True  # reveal start tile
 
-# ------------------------------------------------------
-# GENERATE OBJECTS (NO PNG/GIF, ONLY COLORS)
-# ------------------------------------------------------
-def generate(level):
+# -------------------------
+# Generate objects
+# -------------------------
+def generate_objects(level):
     objs = []
+
     obj_counts = {
         "treasure": 3 + level // 2,
-        "coin": 2 + level // 3,
+        "coin": 3,
         "heart": 1,
-        "bomb": 3 + level // 2,
+        "bomb": 2 + level // 2,
     }
 
-    def place(obj_type, count):
+    for typ, count in obj_counts.items():
         for _ in range(count):
             while True:
                 pos = [random.randint(0, GRID-1), random.randint(0, GRID-1)]
                 if pos != st.session_state.player and pos not in [o["pos"] for o in objs]:
-                    objs.append({"pos": pos, "type": obj_type})
+                    objs.append({"pos": pos, "type": typ})
                     break
 
-    for t, c in obj_counts.items():
-        place(t, c)
     return objs
 
 
 if not st.session_state["objects"]:
-    st.session_state["objects"] = generate(st.session_state["level"])
+    st.session_state["objects"] = generate_objects(st.session_state["level"])
 
 
-# ------------------------------------------------------
-# MOVEMENT
-# ------------------------------------------------------
+# -------------------------
+# Move
+# -------------------------
 def move(dx, dy):
     x, y = st.session_state.player
     nx, ny = x + dx, y + dy
@@ -113,70 +108,72 @@ def move(dx, dy):
 
             st.session_state["objects"].remove(obj)
 
-    # Level up
+    # level up when treasure exhausted
     if not any(o["type"] == "treasure" for o in st.session_state["objects"]):
         st.session_state.score += 20
         st.session_state.level += 1
         st.balloons()
-        st.info(f"LEVEL UP 🚀 Now Level {st.session_state.level}")
-        st.session_state["objects"] = generate(st.session_state["level"])
+        st.info(f"LEVEL UP 🚀 Level {st.session_state.level}")
+        st.session_state["objects"] = generate_objects(st.session_state["level"])
 
 
-# ------------------------------------------------------
-# UI THEME (AMAZING LOOK)
-# ------------------------------------------------------
-UI = """
+# -------------------------
+# CSS UI Styling
+# -------------------------
+st.markdown("""
 <style>
-body {background: linear-gradient(135deg,#0A2342,#0F4C75);}
-.grid {border-collapse: collapse;margin:auto;}
-.grid td{
-    width:60px;height:60px;text-align:center;
-    border:1px solid rgba(255,255,255,0.08);
-    font-size:28px;font-weight:600;border-radius:10px;
-    transition:0.2s;
+body {background: #0D1B2A;}
+.grid td {
+    width: 60px; height: 60px; text-align: center;
+    font-size: 32px; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
 }
-.hidden {background:#13141f;}
-.player {background:#4CC9F0; color:black;}
-.treasure {background:#FEE440;color:black;}
-.coin {background:#FF9F1C;color:black;}
-.heart {background:#FF595E;color:white;}
-.bomb {background:#6A040F;color:white;}
-.controls button{
-    width:80px;height:60px;font-size:32px;
-    border-radius:12px;background:#4CC9F0;border:none;color:black;
+.hidden {background:#1b263b; color:#415a77;}
+.player {background:#4CC9F0;}
+.treasure {background:#FEE440;}
+.coin {background:#FF9F1C;}
+.heart {background:#E63946; color:white;}
+.bomb {background:#6A040F; color:white;}
+.control-btn{
+    width:70px;height:55px;font-size:28px;
+    background:#4CC9F0;border-radius:12px;
+    border:none;color:black;
 }
-#mobile-controls{position:fixed;bottom:15px;width:100%;text-align:center;}
 </style>
-"""
-st.markdown(UI, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# ------------------------------------------------------
-# MAIN LAYOUT
-# ------------------------------------------------------
-c1, c2 = st.columns([3, 1])
 
-with c1:
-    st.markdown(f"### Level: {st.session_state.level} Score: {st.session_state.score} Lives: {st.session_state.lives}")
+# -------------------------
+# Layout: Grid + Controls
+# -------------------------
+col_grid, col_controls = st.columns([3, 1])
+
+with col_grid:
+    st.markdown(f"### 🥷 Ninja Treasure Hunt")
+    st.markdown(f"**Level:** {st.session_state.level}  **Score:** {st.session_state.score}  **Lives:** {st.session_state.lives}")
 
     elapsed = int(time.time() - st.session_state.start)
     st.markdown(f"⏱ Time: `{elapsed}s`")
+
+    icons = {"treasure": "💎", "coin": "🪙", "heart": "❤️", "bomb": "💣"}
 
     table = "<table class='grid'>"
     for i in range(GRID):
         table += "<tr>"
         for j in range(GRID):
-            cell = ""
+            cell = "?"
             css = "hidden"
 
             if st.session_state.player == [i, j]:
-                cell = "🙂"
+                cell = "🥷"
                 css = "player"
             elif st.session_state.revealed[i][j]:
                 obj = next((o for o in st.session_state.objects if o["pos"] == [i, j]), None)
                 if obj:
                     css = obj["type"]
-                    icons = {"treasure": "💎", "coin": "🪙", "heart": "❤️", "bomb": "💣"}
                     cell = icons[obj["type"]]
+                else:
+                    cell = ""
 
             table += f"<td class='{css}'>{cell}</td>"
         table += "</tr>"
@@ -184,62 +181,54 @@ with c1:
 
     st.markdown(table, unsafe_allow_html=True)
 
-# ------------------------------------------------------
-# CONTROLS (desktop side, mobile bottom)
-# ------------------------------------------------------
-with c2:
-    st.subheader("Controls")
-    if st.button("⬆"):
-        move(-1, 0)
-    left, right = st.columns(2)
-    with left:
-        if st.button("⬅"):
-            move(0, -1)
-    with right:
-        if st.button("➡"):
-            move(0, 1)
-    if st.button("⬇"):
-        move(1, 0)
+# -------------------------
+# Controls (Symmetric D-pad)
+# -------------------------
+with col_controls:
+    st.markdown("### Move")
 
-# Mobile controls
-st.markdown("""
-<div id="mobile-controls">
-    <div class='controls'>
-        <button onclick="fetch('?move=up')">⬆</button><br>
-        <button onclick="fetch('?move=left')">⬅</button>
-        <button onclick="fetch('?move=right')">➡</button><br>
-        <button onclick="fetch('?move=down')">⬇</button>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    up = st.button("⬆", key="up", help="Move up", use_container_width=True)
 
-# ------------------------------------------------------
-# GAME OVER
-# ------------------------------------------------------
+    c1, c2, c3 = st.columns([1, 1, 1])
+    left = c1.button("⬅", key="left", help="Move left")
+    right = c3.button("➡", key="right", help="Move right")
+
+    down = st.button("⬇", key="down", help="Move down", use_container_width=True)
+
+    if up: move(-1, 0)
+    if down: move(1, 0)
+    if left: move(0, -1)
+    if right: move(0, 1)
+
+
+# -------------------------
+# GAME OVER / SAVE SCORE
+# -------------------------
 if st.session_state.lives <= 0:
     st.error("GAME OVER 💀")
 
-    name = st.text_input("Enter your name for leaderboard:")
-    if st.button("Save score"):
+    name = st.text_input("Enter your name:")
+    if st.button("Save Score"):
         if name.strip():
             scores.append({"name": name, "score": st.session_state.score})
             scores.sort(key=lambda x: x["score"], reverse=True)
             scores[:] = scores[:10]
             save_scores(scores)
-            st.success("Score saved ✅")
+            st.success("Score Saved ✅")
 
-    if st.button("Restart"):
-        for k in defaults:
-            st.session_state[k] = defaults[k]
+    if st.button("Restart Game"):
+        for k, v in defaults.items():
+            st.session_state[k] = v
         st.experimental_rerun()
 
 
-# ------------------------------------------------------
-# SHOW LEADERBOARD
-# ------------------------------------------------------
-st.sidebar.title("Leaderboard 🏆")
+# -------------------------
+# Leaderboard (sidebar)
+# -------------------------
+st.sidebar.title("🏆 Leaderboard")
 if scores:
     for i, entry in enumerate(scores):
-        st.sidebar.write(f"**{i+1}. {entry['name']}** — {entry['score']} pts")
+        st.sidebar.write(f"**{i+1}. {entry['name']} — {entry['score']} pts**")
 else:
     st.sidebar.write("No scores yet.")
+
