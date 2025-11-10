@@ -148,9 +148,9 @@ if not st.session_state.screen_probe_done:
 
 # read viewport width from query params
 try:
-    qp = st.experimental_get_query_params()
+    qp = st.query_params  # NEW API (dict-like)
     if "vw" in qp:
-        vw = int(qp["vw"][0])
+        vw = int(qp["vw"])
         if vw < 800:
             st.session_state.screen_mode = "mobile"
             st.session_state.grid_size = GRID_MOBILE
@@ -159,6 +159,7 @@ try:
             st.session_state.grid_size = GRID_DESKTOP
 except Exception:
     pass
+
 
 GRID_SIZE = st.session_state.grid_size
 
