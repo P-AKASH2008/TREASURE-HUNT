@@ -4,20 +4,19 @@ import random
 # ---------------------- SESSION STATE INIT ----------------------
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
-    st.session_state.size = 10  # default grid size (Difficulty modifies this)
+    st.session_state.size = 10
     st.session_state.player = [0, 0]
     st.session_state.score = 0
     st.session_state.lives = 3
+    st.session_state.game_loaded = False  # prevents rerun reset
 
 def reset_game(grid_size):
     st.session_state.size = grid_size
     st.session_state.player = [0, 0]
     st.session_state.score = 0
     st.session_state.lives = 3
-
-    # spawn objects
     st.session_state.treasure = random_cell()
-    st.session_state.coins = random.sample(all_cells(), k=5)
+    st.session_state.coins = random.sample(all_cells(), k=6)
     st.session_state.bombs = random.sample(all_cells(), k=4)
     st.session_state.hearts = random.sample(all_cells(), k=2)
 
@@ -30,7 +29,7 @@ def all_cells():
     return [[r, c] for r in range(size) for c in range(size)]
 
 # ---------------------- MOVEMENT ----------------------
-def move_player(direction):
+def move(direction):
     r, c = st.session_state.player
     size = st.session_state.size
 
@@ -45,7 +44,7 @@ def move_player(direction):
 
     st.session_state.player = [r, c]
 
-    # --- interactions ---
+    # Actions
     if [r, c] in st.session_state.coins:
         st.session_state.score += 10
         st.session_state.coins.remove([r, c])
@@ -59,56 +58,59 @@ def move_player(direction):
         st.session_state.bombs.remove([r, c])
 
     if st.session_state.lives <= 0:
-        st.error("💥 GAME OVER! Out of lives.")
-        reset_game(st.session_state.size)
+        st.error("💥 GAME OVER! Lives exhausted.")
+        st.session_state.game_loaded = False
 
     if [r, c] == st.session_state.treasure:
         st.success("💎 You found the treasure!")
-        reset_game(st.session_state.size)
+        st.session_state.game_loaded = False
 
+# ---------------------- SIDEBAR UI ----------------------
+st.sidebar.title("🥷 Controls")
 
-# ---------------------- UI SIDEBAR ----------------------
-st.sidebar.title("🕹 Controls")
+difficulty = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"], key="diff")
 
-difficulty = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"])
+# Only reset when difficulty is manually changed
+if not st.session_state.game_loaded:
+    st.session_state.game_loaded = True
+    if difficulty == "Easy":
+        reset_game(8)
+    elif difficulty == "Medium":
+        reset_game(10)
+    else:
+        reset_game(12)
 
-if difficulty == "Easy":
-    reset_game(8)
-elif difficulty == "Medium":
-    reset_game(10)
-else:
-    reset_game(12)
-
+# Movement controls (symmetrical layout)
 st.sidebar.write("### Movement")
-col_btn1, col_btn2 = st.sidebar.columns(2)
+col_up = st.sidebar.columns([1, 1, 1])
+col_mid = st.sidebar.columns([1, 1, 1])
 
-if col_btn1.button("⬆ Up"):
-    move_player("up")
-if col_btn1.button("⬅ Left"):
-    move_player("left")
-if col_btn2.button("➡ Right"):
-    move_player("right")
-if col_btn2.button("⬇ Down"):
-    move_player("down")
+if col_up[1].button("⬆", key="btn_up"):
+    move("up")
+if col_mid[0].button("⬅", key="btn_left"):
+    move("left")
+if col_mid[2].button("➡", key="btn_right"):
+    move("right")
+if st.sidebar.button("⬇", key="btn_down"):
+    move("down")
 
 st.sidebar.write("---")
-st.sidebar.write(f"**Score:** {st.session_state.score}")
-st.sidebar.write(f"**Lives:** {st.session_state.lives}")
+st.sidebar.write(f"⭐ **Score:** {st.session_state.score}")
+st.sidebar.write(f"❤️ **Lives:** {st.session_state.lives}")
 
-# ---------------------- GRID RENDER ----------------------
+# ---------------------- GRID DISPLAY ----------------------
 st.title("🏴‍☠️ Treasure Hunt")
 
 size = st.session_state.size
 pr, pc = st.session_state.player
 
 for r in range(size):
-    row = st.columns(size)
+    cols = st.columns(size)
     for c in range(size):
 
-        visible = (abs(r - pr) <= 1 and abs(c - pc) <= 1)
+        visible = abs(r - pr) <= 1 and abs(c - pc) <= 1
 
-        cell = "❓"  # fog
-
+        cell = "❓"
         if visible:
             if [r, c] == [pr, pc]:
                 cell = "🧛‍♂️"
@@ -116,11 +118,11 @@ for r in range(size):
                 cell = "💎"
             elif [r, c] in st.session_state.coins:
                 cell = "📀"
-            elif [r, c] in st.session_state.hearts:
-                cell = "❤️"
             elif [r, c] in st.session_state.bombs:
                 cell = "💣"
+            elif [r, c] in st.session_state.hearts:
+                cell = "❤️"
             else:
                 cell = "⬜"
 
-        row[c].write(f"<h3 style='text-align:center'>{cell}</h3>", unsafe_allow_html=True)
+        cols[c].markdown(f"<div style='text-align:center;font-size:26px'>{cell}</div>", unsafe_allow_html=True)
