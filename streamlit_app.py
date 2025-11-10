@@ -84,7 +84,6 @@ up = ctrl.button("⬆️ Up", use_container_width=True)
 left_col, mid_gap, right_col = ctrl.columns([1, 0.3, 1])
 left = left_col.button("⬅️ Left", use_container_width=True)
 right = right_col.button("➡️ Right", use_container_width=True)
-
 down = ctrl.button("⬇️ Down", use_container_width=True)
 
 if up: move(-1, 0)
