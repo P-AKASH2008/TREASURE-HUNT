@@ -1,118 +1,192 @@
 import streamlit as st
 import random
+import time
 
+# ---------------------------------------------------
+# PAGE CONFIG
+# ---------------------------------------------------
 st.set_page_config(page_title="Treasure Hunt", layout="wide")
 
-# ===========================
-# DIFFICULTY DROPDOWN
-# ===========================
-new_diff = st.sidebar.selectbox("🎮 Difficulty", ["Easy", "Medium", "Hard"])
-if new_diff != st.session_state.get("difficulty", None):
-    st.session_state.clear()
-    st.session_state.difficulty = new_diff
+# ---------------------------------------------------
+# CSS FIXES (Ninja visibility + Symmetric Buttons)
+# ---------------------------------------------------
+st.markdown("""
+<style>
+button[kind="secondary"] {
+    border-radius: 12px !important;
+    height: 48px !important;
+    width: 90px !important;
+    font-size: 24px !important;
+}
+
+.ninja {
+    font-size: 38px !important;
+    display: flex;
+    justify-content: center;
+}
+
+.gridcell {
+    font-size: 32px;
+    text-align: center;
+    padding: 6px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------
+# INITIAL GAME SETUP
+# ---------------------------------------------------
+def init_game():
+    size_map = {"Easy": 8, "Medium": 10, "Hard": 12}
+    st.session_state.size = size_map[st.session_state.difficulty]
+
+    size = st.session_state.size
+    st.session_state.player = [size // 2, size // 2]
+    st.session_state.coins = []
+    st.session_state.bombs = []
+    st.session_state.hearts = []
+    st.session_state.score = 0
+    st.session_state.lives = 3
+
+    # Place treasure
+    while True:
+        tr = [random.randint(0, size - 1), random.randint(0, size - 1)]
+        if tr != st.session_state.player:
+            st.session_state.treasure = tr
+            break
+
+    # Place coins / bombs / hearts
+    for _ in range(size // 2):
+        place_random(st.session_state.coins)
+    for _ in range(size // 3):
+        place_random(st.session_state.bombs)
+    for _ in range(size // 4):
+        place_random(st.session_state.hearts)
+
+    # fog
+    st.session_state.revealed = [[False] * size for _ in range(size)]
+    reveal_area()
 
 
-# ===========================
-# GAME SETUP
-# ===========================
-if "grid" not in st.session_state:
-    size = {"Easy": 6, "Medium": 8, "Hard": 10}[st.session_state.difficulty]
-
-    st.session_state.rows = size
-    st.session_state.cols = size
-
-    st.session_state.player = [size // 2, size // 2]  # start at center
-
-    st.session_state.ninja = "🥷"
-    st.session_state.treasure = "💿"
-    st.session_state.bomb = "💣"
-    st.session_state.fog = "❓"
-
-    # create empty grid
-    st.session_state.grid = [["" for _ in range(size)] for _ in range(size)]
-
-    # place treasure and bomb randomly
-    cells = [(r, c) for r in range(size) for c in range(size)]
-    random.shuffle(cells)
-
-    st.session_state.treasure_pos = cells.pop()
-    st.session_state.bomb_pos = cells.pop()
-
-    tr, tc = st.session_state.treasure_pos
-    br, bc = st.session_state.bomb_pos
-    st.session_state.grid[tr][tc] = st.session_state.treasure
-    st.session_state.grid[br][bc] = st.session_state.bomb
-
-    st.session_state.game_over = False
+def place_random(container):
+    size = st.session_state.size
+    while True:
+        cell = [random.randint(0, size - 1), random.randint(0, size - 1)]
+        if cell != st.session_state.player and \
+           cell not in st.session_state.coins and \
+           cell not in st.session_state.bombs and \
+           cell not in st.session_state.hearts and \
+           cell != st.session_state.treasure:
+            container.append(cell)
+            return
 
 
-# ===========================
-# MOVEMENT FUNCTION
-# ===========================
+def reveal_area():
+    size = st.session_state.size
+    pr, pc = st.session_state.player
+
+    st.session_state.revealed = [[False] * size for _ in range(size)]
+
+    for r in range(pr - 1, pr + 2):
+        for c in range(pc - 1, pc + 2):
+            if 0 <= r < size and 0 <= c < size:
+                st.session_state.revealed[r][c] = True
+
+
 def move(dr, dc):
-    if st.session_state.game_over:
-        return
-
+    size = st.session_state.size
     r, c = st.session_state.player
     nr, nc = r + dr, c + dc
 
-    # bounds check
-    if 0 <= nr < st.session_state.rows and 0 <= nc < st.session_state.cols:
+    if 0 <= nr < size and 0 <= nc < size:
         st.session_state.player = [nr, nc]
-
-        if (nr, nc) == st.session_state.treasure_pos:
-            st.session_state.game_over = True
-            st.success("🎉 You found the treasure!")
-
-        elif (nr, nc) == st.session_state.bomb_pos:
-            st.session_state.game_over = True
-            st.error("💣 Boom! You stepped on a bomb!")
+        reveal_area()
+        evaluate_tile()
 
 
-# ===========================
-# SIDEBAR CONTROLS (D-PAD)
-# ===========================
-st.sidebar.write("## 🕹 Controls")
+def evaluate_tile():
+    pos = st.session_state.player
+
+    if pos in st.session_state.coins:
+        st.session_state.score += 10
+        st.session_state.coins.remove(pos)
+
+    if pos in st.session_state.hearts:
+        st.session_state.lives += 1
+        st.session_state.hearts.remove(pos)
+
+    if pos in st.session_state.bombs:
+        st.session_state.lives -= 1
+        st.session_state.bombs.remove(pos)
+
+        if st.session_state.lives <= 0:
+            st.error("💥 Game Over! No lives left.")
+            time.sleep(1)
+            init_game()
+            st.rerun()
+
+    if pos == st.session_state.treasure:
+        st.success("💎 You found the Treasure!")
+        st.balloons()
+        time.sleep(1)
+        init_game()
+        st.rerun()
+
+
+# ---------------------------------------------------
+# SIDEBAR (UI CONTROL)
+# ---------------------------------------------------
+st.sidebar.title("🎮 Controls")
+
+st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"], key="difficulty", on_change=init_game)
+
+st.sidebar.write("### 🧿 Scoreboard")
+st.sidebar.write(f"⭐ Score: **{st.session_state.get('score',0)}**")
+st.sidebar.write(f"❤️ Lives: **{st.session_state.get('lives',3)}**")
+
+st.sidebar.write("---")
+st.sidebar.write("### 🕹 Movement")
 
 ctrl = st.sidebar.container()
-
-#     ⬆️
-# ⬅️     ➡️
-#     ⬇️
-up = ctrl.button("⬆️ Up", use_container_width=True)
-
-left_col, mid_gap, right_col = ctrl.columns([1, 0.3, 1])
-left = left_col.button("⬅️ Left", use_container_width=True)
-right = right_col.button("➡️ Right", use_container_width=True)
-down = ctrl.button("⬇️ Down", use_container_width=True)
+up = ctrl.button("⬆️")
+col1, _, col2 = ctrl.columns([1, 0.3, 1])
+left = col1.button("⬅️")
+right = col2.button("➡️")
+down = ctrl.button("⬇️")
 
 if up: move(-1, 0)
 if down: move(1, 0)
 if left: move(0, -1)
 if right: move(0, 1)
 
+# ---------------------------------------------------
+# MAIN GAME UI GRID
+# ---------------------------------------------------
+st.title("🗺️ Treasure Hunt")
 
-# ===========================
-# GAME DISPLAY — FOG LOGIC
-# ===========================
-st.title("Treasure Hunt")
+if "player" not in st.session_state:
+    init_game()
 
-game = st.container()
+size = st.session_state.size
 
-pr, pc = st.session_state.player
+for r in range(size):
+    cols = st.columns(size)
+    for c in range(size):
 
-for r in range(st.session_state.rows):
-    cols = game.columns(st.session_state.cols, gap="small")
-    for c in range(st.session_state.cols):
+        if [r, c] == st.session_state.player:
+            cols[c].markdown("<div class='ninja'>🥷</div>", unsafe_allow_html=True)
 
-        # 🔥 only reveal 8 surrounding blocks of the ninja
-        if abs(r - pr) <= 1 and abs(c - pc) <= 1:
-            cell = st.session_state.grid[r][c]
-
-            if [r, c] == st.session_state.player:
-                cols[c].button(st.session_state.ninja, key=f"p-{r}-{c}")
+        elif st.session_state.revealed[r][c]:
+            if [r, c] == st.session_state.treasure:
+                cols[c].markdown("<div class='gridcell'>💎</div>", unsafe_allow_html=True)
+            elif [r, c] in st.session_state.coins:
+                cols[c].markdown("<div class='gridcell'>📀</div>", unsafe_allow_html=True)
+            elif [r, c] in st.session_state.bombs:
+                cols[c].markdown("<div class='gridcell'>💣</div>", unsafe_allow_html=True)
+            elif [r, c] in st.session_state.hearts:
+                cols[c].markdown("<div class='gridcell'>❤️</div>", unsafe_allow_html=True)
             else:
-                cols[c].button(cell if cell != "" else " ", key=f"{r}-{c}")
+                cols[c].markdown("<div class='gridcell'>⬜</div>", unsafe_allow_html=True)
 
         else:
-            cols[c].button(st.session_state.fog, key=f"fog-{r}-{c}")
+            cols[c].markdown("<div class='gridcell'>❓</div>", unsafe_allow_html=True)
