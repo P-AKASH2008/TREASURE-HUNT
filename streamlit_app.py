@@ -193,11 +193,12 @@ if st.sidebar.checkbox("🏆 View Leaderboard"):
 st.sidebar.subheader("How to play")
 st.sidebar.markdown(
 """
-🧛‍♂️ Move in fog covered map  
+🧛‍♂️ Move in fog(?) covered map  
 📀 +10 score  
 ❤️ +1 life  
 💣 -1 life  
-💎 Win if you reach the treasure  
+💎 Win if you reach the treasure
+🚩 Save and Restart after game ends
 """
 )
 
