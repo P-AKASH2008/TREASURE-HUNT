@@ -193,7 +193,8 @@ if st.sidebar.checkbox("🏆 View Leaderboard"):
 st.sidebar.subheader("How to play")
 st.sidebar.markdown(
 """
-🧛‍♂️ Move in fog(?) covered map  
+🧛‍♂️ Move in fog(?) covered map
+🤺 Each set of moves costs 1 life
 📀 +10 score  
 ❤️ +1 life  
 💣 -1 life  
