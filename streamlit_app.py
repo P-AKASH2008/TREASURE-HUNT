@@ -2,13 +2,14 @@
 import streamlit as st
 import random
 import time
+import base64
 
-# ---------------- Page settings ----------------
+# ---------------- Page config ----------------
 st.set_page_config(page_title="Treasure Hunt", layout="wide")
 st.set_option("client.showErrorDetails", True)
 
-# ---------------- Session State Init ----------------
-def init_state():
+# ---------------- Initialize Session State ----------------
+def init_session_defaults():
     defaults = {
         "difficulty": "Medium",
         "prev_difficulty": None,
@@ -24,29 +25,37 @@ def init_state():
         "lives": 3,
         "moves": 0,
         "max_moves": None,
-        "leaderboard": [],
-        "awaiting_name": False
+        "sound_enabled": False,        # NEW 🔊
     }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-init_state()
+init_session_defaults()
+
+# ---------------- Load Sounds ----------------
+def play_sound(file):
+    """Play sound only when sound toggle is ON."""
+    if st.session_state["sound_enabled"]:
+        with open(f"sounds/{file}", "rb") as f:
+            audio_bytes = f.read()
+        st.audio(audio_bytes, format="audio/wav", autoplay=True)
+
+def play_bgm():
+    if st.session_state["sound_enabled"]:
+        with open("sounds/bgm.wav", "rb") as f:
+            audio_bytes = f.read()
+        st.audio(audio_bytes, format="audio/wav", autoplay=True)
 
 # ---------------- Helpers ----------------
-def manhattan(a, b):
-    return abs(a[0] - b[0]) + abs(a[1] - b[1])
-
-def all_cells(n):
-    return [[r, c] for r in range(n) for c in range(n)]
-
+def manhattan(a, b): return abs(a[0] - b[0]) + abs(a[1] - b[1])
+def all_cells(n): return [[r, c] for r in range(n) for c in range(n)]
 def sample_positions(n, exclude, count):
     pool = [p for p in all_cells(n) if p not in exclude]
-    if count >= len(pool):
-        return pool.copy()
+    if count >= len(pool): return pool.copy()
     return random.sample(pool, count)
 
-# ---------------- Game Init ----------------
+# ---------------- Game initialization / reset ----------------
 def init_game(difficulty=None):
     if difficulty is None:
         difficulty = st.session_state["difficulty"]
@@ -55,20 +64,17 @@ def init_game(difficulty=None):
     size = size_map.get(difficulty, 10)
     st.session_state["grid_size"] = size
 
+    # player start at center
     start = [size // 2, size // 2]
     st.session_state["player"] = start.copy()
     st.session_state["start_pos"] = start.copy()
 
+    # difficulty lives
+    lives_map = {"Easy": 3, "Medium": 2, "Hard": 1}
+    st.session_state["lives"] = lives_map[difficulty]
+
     st.session_state["score"] = 0
     st.session_state["moves"] = 0
-
-    # ✅ Correct difficulty lives
-    if difficulty == "Easy":
-        st.session_state["lives"] = 3
-    elif difficulty == "Medium":
-        st.session_state["lives"] = 2
-    else:
-        st.session_state["lives"] = 1
 
     cells = all_cells(size)
     cells.remove(start)
@@ -77,144 +83,108 @@ def init_game(difficulty=None):
     st.session_state["treasure"] = treasure
     cells.remove(treasure)
 
-    # items (dense but balanced)
-    coin_count = max(4, size // 2)
-    bomb_count = max(3, size // 3)
-    heart_count = max(1, size // 5)
+    # Generate items
+    coins_count = max(4, size // 2)
+    bombs_count = max(3, size // 3)
+    hearts_count = max(1, size // 5)
 
-    st.session_state["coins"] = sample_positions(size, [start, treasure], coin_count)
+    st.session_state["coins"] = sample_positions(size, [start, treasure], coins_count)
     excluded = [start, treasure] + st.session_state["coins"]
-    st.session_state["bombs"] = sample_positions(size, excluded, bomb_count)
+    st.session_state["bombs"] = sample_positions(size, excluded, bombs_count)
     excluded += st.session_state["bombs"]
-    st.session_state["hearts"] = sample_positions(size, excluded, heart_count)
+    st.session_state["hearts"] = sample_positions(size, excluded, hearts_count)
 
     st.session_state["max_moves"] = manhattan(start, treasure) + 5
-
     st.session_state["prev_difficulty"] = difficulty
-    st.session_state["difficulty"] = difficulty
     st.session_state["game_initialized"] = True
-    st.session_state["awaiting_name"] = False
 
+# Initialize game
+diff = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"],
+                            index=["Easy","Medium","Hard"].index(st.session_state["difficulty"]))
 
-# ---------------- Movement + Logic ----------------
+if not st.session_state["game_initialized"] or diff != st.session_state["prev_difficulty"]:
+    st.session_state["difficulty"] = diff
+    init_game(diff)
+
+# ---------------- Fog Visibility ----------------
+def is_visible(r, c):
+    pr, pc = st.session_state["player"]
+    return abs(r - pr) <= 1 and abs(c - pc) <= 1
+
+# ---------------- Player Movement ----------------
 def apply_move(direction):
-    if st.session_state["awaiting_name"]:
-        return
+    play_sound("move.wav")  # 🎵 Move SFX
 
     size = st.session_state["grid_size"]
     r, c = st.session_state["player"]
 
-    match direction:
-        case "up":
-            if r > 0: r -= 1
-        case "down":
-            if r < size - 1: r += 1
-        case "left":
-            if c > 0: c -= 1
-        case "right":
-            if c < size - 1: c += 1
+    if direction == "up" and r > 0: r -= 1
+    elif direction == "down" and r < size - 1: r += 1
+    elif direction == "left" and c > 0: c -= 1
+    elif direction == "right" and c < size - 1: c += 1
+    else: return
 
     st.session_state["player"] = [r, c]
     st.session_state["moves"] += 1
 
-    # coin collected
+    # coin
     if [r, c] in st.session_state["coins"]:
         st.session_state["score"] += 10
         st.session_state["coins"].remove([r, c])
-        st.success("📀 +10 score")
+        play_sound("coin.wav")
 
-    # extra life
+    # heart
     if [r, c] in st.session_state["hearts"]:
         st.session_state["lives"] += 1
         st.session_state["hearts"].remove([r, c])
-        st.success("❤️ +1 life")
+        play_sound("heart.wav")
 
-    # bomb hit
+    # bomb
     if [r, c] in st.session_state["bombs"]:
         st.session_state["lives"] -= 1
         st.session_state["bombs"].remove([r, c])
-        st.warning("💣 -1 life")
+        play_sound("bomb.wav")
 
-    # treasure found
+        if st.session_state["lives"] <= 0:
+            time.sleep(0.6)
+            init_game(st.session_state["difficulty"])
+            return
+
+    # treasure
     if [r, c] == st.session_state["treasure"]:
         st.session_state["score"] += 20
-        st.success("💎 Treasure Found! +20 score")
-        st.session_state["awaiting_name"] = True
+        play_sound("treasure.wav")
+        time.sleep(0.6)
+        init_game(st.session_state["difficulty"])
         return
 
-    # Out of moves check
-    if st.session_state["moves"] > st.session_state["max_moves"]:
-        st.error("⌛ Out of moves!")
-        st.session_state["lives"] -= 1
+# ---------------- Sidebar (Score + Controls) ----------------
+with st.sidebar:
+    st.header("⚙️ Game Panel")
+    st.markdown(f"🏆 **Score:** {st.session_state['score']}")
+    st.markdown(f"❤️ **Lives:** {st.session_state['lives']}")
+    st.markdown(f"🚶 **Moves:** {st.session_state['moves']} / {st.session_state['max_moves']}")
 
-    if st.session_state["lives"] <= 0:
-        st.error("💀 Game Over!")
-        st.session_state["awaiting_name"] = True
+    # 🔊 Toggle sound
+    st.session_state["sound_enabled"] = st.checkbox("🔊 Sound ON/OFF", value=False)
 
+    st.markdown("---")
+    st.subheader("Controls")
+    c1, c2 = st.columns(2)
+    with c1: st.button("⬆️", key="up", on_click=apply_move, args=("up",))
+    with c2: st.button("➡️", key="right", on_click=apply_move, args=("right",))
+    c3, c4 = st.columns(2)
+    with c3: st.button("⬇️", key="down", on_click=apply_move, args=("down",))
+    with c4: st.button("⬅️", key="left", on_click=apply_move, args=("left",))
 
-# ---------------- Sidebar ----------------
-selected = st.sidebar.selectbox(
-    "Difficulty",
-    ["Easy", "Medium", "Hard"],
-    index=["Easy","Medium","Hard"].index(st.session_state["difficulty"])
-)
+    st.markdown("---")
+    if st.button("🔄 Restart"):
+        init_game(st.session_state["difficulty"])
 
-if (selected != st.session_state["prev_difficulty"]) or (not st.session_state["game_initialized"]):
-    init_game(selected)
-
-st.sidebar.header("⚙️ Game Panel")
-st.sidebar.markdown(f"**🏆 Score:** {st.session_state['score']}")
-st.sidebar.markdown(f"**❤️ Lives:** {st.session_state['lives']}")
-st.sidebar.markdown(f"**🚶 Moves:** {st.session_state['moves']} / {st.session_state['max_moves']}")
-
-# ⬆⬇⬅➡ controls
-st.sidebar.subheader("Controls")
-c1, c2 = st.sidebar.columns(2)
-c1.button("⬆️ Up", on_click=apply_move, args=("up",))
-c2.button("➡️ Right", on_click=apply_move, args=("right",))
-c3, c4 = st.sidebar.columns(2)
-c3.button("⬇️ Down", on_click=apply_move, args=("down",))
-c4.button("⬅️ Left", on_click=apply_move, args=("left",))
-
-# Restart
-if st.sidebar.button("🔄 Restart Game"):
-    init_game(st.session_state["difficulty"])
-
-# Leaderboard toggle
-if st.sidebar.checkbox("🏆 View Leaderboard"):
-    st.sidebar.markdown("### Top 10 Scores")
-    if len(st.session_state["leaderboard"]) == 0:
-        st.sidebar.write("No scores yet.")
-    else:
-        for i, entry in enumerate(st.session_state["leaderboard"], 1):
-            st.sidebar.write(f"**{i}. {entry['name']}** — {entry['score']} pts  _({entry['time']})_")
-
-# Instructions
-st.sidebar.subheader("How to play")
-st.sidebar.markdown(
-"""
-🧛‍♂️ Move in fog(?) covered map
-
-🤺 Each set of moves costs 1 
-        life
-
-📀 +10 score  
-❤️ +1 life  
-💣 -1 life  
-💎 Win if you reach the treasure
-
-🚩 Save and Restart after game 
-        ends
-"""
-)
-
-
-# ---------------- GRID DISPLAY ----------------
-def visible(r, c):
-    pr, pc = st.session_state["player"]
-    return abs(r - pr) <= 1 and abs(c - pc) <= 1
-
+# ---------------- Main UI (Grid Render) ----------------
 st.title("🧛‍♂️ Treasure Hunt — Vampire Heist")
+
+play_bgm()
 
 size = st.session_state["grid_size"]
 pr, pc = st.session_state["player"]
@@ -222,9 +192,10 @@ pr, pc = st.session_state["player"]
 for r in range(size):
     cols = st.columns(size, gap="small")
     for c, col in enumerate(cols):
-        if visible(r, c):
+
+        if is_visible(r, c):
             if [r, c] == [pr, pc]:
-                col.markdown("<div style='text-align:center;font-size:30px'>🧛‍♂️</div>", unsafe_allow_html=True)
+                col.markdown("<div style='text-align:center;font-size:28px'>🧛‍♂️</div>", unsafe_allow_html=True)
             elif [r, c] == st.session_state["treasure"]:
                 col.markdown("<div style='text-align:center;font-size:26px'>💎</div>", unsafe_allow_html=True)
             elif [r, c] in st.session_state["coins"]:
@@ -234,29 +205,9 @@ for r in range(size):
             elif [r, c] in st.session_state["bombs"]:
                 col.markdown("<div style='text-align:center;font-size:26px'>💣</div>", unsafe_allow_html=True)
             else:
-                col.markdown("<div style='text-align:center;background:#0b1220;border-radius:6px;padding:10px;'> </div>", unsafe_allow_html=True)
+                col.markdown(
+                    "<div style='text-align:center;background:#0b1220;border-radius:6px;padding:8px;color:#0b1220;'>⬛</div>",
+                    unsafe_allow_html=True
+                )
         else:
-            col.markdown("<div style='text-align:center;color:#ffb4b4;font-size:20px'>❔</div>", unsafe_allow_html=True)
-
-
-# ---------------- SAVE SCORE SCREEN ----------------
-if st.session_state["awaiting_name"]:
-    with st.sidebar.form("save_score_form"):
-        st.sidebar.markdown("### 💀 Game Over — Save Score")
-        name = st.text_input("Your Name:")
-        submit = st.form_submit_button("Save Score")
-
-    if submit and name.strip() != "":
-        st.session_state["leaderboard"].append({
-            "name": name,
-            "score": st.session_state["score"],
-            "time": time.strftime("%d-%m-%Y %H:%M:%S")
-        })
-
-        st.session_state["leaderboard"] = sorted(
-            st.session_state["leaderboard"],
-            key=lambda x: x["score"],
-            reverse=True
-        )[:10]
-
-        init_game(st.session_state["difficulty"])
+            col.markdown("<div style='text-align:center;font-size:22px'>❔</div>", unsafe_allow_html=True)
