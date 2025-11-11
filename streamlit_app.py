@@ -3,40 +3,47 @@ import random
 
 st.set_page_config(page_title="Treasure Hunt", layout="wide")
 
-# -------------------------------------------
-# INITIALIZE SESSION STATE
-# -------------------------------------------
+# ---------------------------------------------------
+# ✅ SESSION STATE INITIALIZATION (must be first)
+# ---------------------------------------------------
 if "initialized" not in st.session_state:
+
     st.session_state.grid_size = 10
     st.session_state.player = [5, 5]
     st.session_state.treasure = [random.randint(0, 9), random.randint(0, 9)]
+
     st.session_state.score = 0
     st.session_state.lives = 3
 
-    # moves allowed = minimum displacement + 5 bonus moves
-    st.session_state.moves = 0
-    st.session_state.max_moves = abs(st.session_state.player[0] - st.session_state.treasure[0]) + abs(
+    # moves allowed = Manhattan distance + 5
+    displacement = abs(st.session_state.player[0] - st.session_state.treasure[0]) + abs(
         st.session_state.player[1] - st.session_state.treasure[1]
-    ) + 5
+    )
+
+    st.session_state.moves = 0
+    st.session_state.max_moves = displacement + 5
 
     st.session_state.initialized = True
 
 
-# -------------------------------------------
-# GAME RESET FUNCTION
-# -------------------------------------------
+# ---------------------------------------------------
+# ✅ GAME RESET (restart button calls this)
+# ---------------------------------------------------
 def restart_game():
     st.session_state.player = [5, 5]
     st.session_state.treasure = [random.randint(0, 9), random.randint(0, 9)]
-    st.session_state.moves = 0
-    st.session_state.max_moves = abs(st.session_state.player[0] - st.session_state.treasure[0]) + abs(
+
+    displacement = abs(st.session_state.player[0] - st.session_state.treasure[0]) + abs(
         st.session_state.player[1] - st.session_state.treasure[1]
-    ) + 5
+    )
+
+    st.session_state.moves = 0
+    st.session_state.max_moves = displacement + 5
 
 
-# -------------------------------------------
-# MOVEMENT CALLBACK
-# -------------------------------------------
+# ---------------------------------------------------
+# ✅ MOVEMENT LOGIC
+# ---------------------------------------------------
 def move(direction):
     r, c = st.session_state.player
 
@@ -52,28 +59,28 @@ def move(direction):
     st.session_state.player = [r, c]
     st.session_state.moves += 1
 
-    # Win check
+    # ✅ Check WIN
     if st.session_state.player == st.session_state.treasure:
         st.session_state.score += 100
-        st.success("💎 TREASURE FOUND! Score +100")
+        st.success("💎 TREASURE FOUND! +100 points")
         restart_game()
 
-    # Lose check
+    # ✅ Check OUT OF MOVES
     if st.session_state.moves >= st.session_state.max_moves:
         st.session_state.lives -= 1
-        st.error("❌ OUT OF MOVES! You lost a life.")
+        st.error("❌ OUT OF MOVES! Lost 1 ❤️")
 
         if st.session_state.lives == 0:
-            st.warning("💀 GAME OVER! Score reset.")
+            st.warning("💀 GAME OVER! Restarting game...")
             st.session_state.score = 0
             st.session_state.lives = 3
 
         restart_game()
 
 
-# -------------------------------------------
-# SIDEBAR UI
-# -------------------------------------------
+# ---------------------------------------------------
+# ✅ SIDEBAR UI
+# ---------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Controls")
 
@@ -81,7 +88,7 @@ with st.sidebar:
     st.write(f"❤️ Lives: **{st.session_state.lives}**")
     st.write(f"🚶 Moves: **{st.session_state.moves}/{st.session_state.max_moves}**")
 
-    st.write("**Movement**")
+    st.subheader("Movement")
 
     st.button("⬆ UP", on_click=move, args=("up",))
 
@@ -98,17 +105,21 @@ with st.sidebar:
 
     st.divider()
     st.subheader("📌 Instructions")
-    st.markdown("""
-- Move the **🧛‍♂️ Vampire** to find the **💎 treasure**
-- You only have limited moves (shown above)
-- Winning gives **+100 score**
-- Running out of moves = lose 1 ❤️
-- Game over at 0 ❤️
-    """)
+    st.write(
+        """
+        🧛‍♂️ = You  
+        💎 = Hidden treasure  
 
-# -------------------------------------------
-# MAIN GAME GRID DISPLAY
-# -------------------------------------------
+        ✅ Reach the treasure within allotted moves  
+        ❌ Running out of moves loses 1 ❤️  
+        💀 At 0 ❤️, game restarts  
+        """
+    )
+
+
+# ---------------------------------------------------
+# ✅ GAME GRID DISPLAY
+# ---------------------------------------------------
 st.title("Treasure Hunt 🧛")
 
 for r in range(st.session_state.grid_size):
@@ -118,5 +129,4 @@ for r in range(st.session_state.grid_size):
             if [r, c] == st.session_state.player:
                 st.markdown("<h2 style='text-align:center'>🧛‍♂️</h2>", unsafe_allow_html=True)
             else:
-                # Fog blocks (dark squares)
                 st.markdown("<h2 style='text-align:center;color:#444'>■</h2>", unsafe_allow_html=True)
