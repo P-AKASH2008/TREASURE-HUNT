@@ -195,7 +195,8 @@ st.sidebar.markdown(
 """
 🧛‍♂️ Move in fog(?) covered map
 
-🤺 Each set of moves costs 1 life
+🤺 Each set of moves costs 1 
+        life
 
 📀 +10 score  
 ❤️ +1 life  
@@ -203,7 +204,7 @@ st.sidebar.markdown(
 💎 Win if you reach the treasure
 
 🚩 Save and Restart after game 
-    ends
+        ends
 """
 )
 
