@@ -34,19 +34,58 @@ def init_session_defaults():
 init_session_defaults()
 
 # ---------------- Load Sounds ----------------
+# ---------------- 🔊 SOUND SYSTEM ----------------
+import os
+
+# helper to encode audio in base64
+def audio_base64(file_path):
+    with open(file_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode()
+    return encoded
+    
 def play_sound(file):
-    """Play sound only when sound toggle is ON."""
+    """Play short sound effects when enabled."""
     if st.session_state["sound_enabled"]:
-        with open(f"sounds/{file}", "rb") as f:
-            audio_bytes = f.read()
-        st.audio(audio_bytes, format="audio/wav", autoplay=True)
-
+        file_path = os.path.join("sounds", file)
+        if os.path.exists(file_path):
+            audio_bytes = open(file_path, "rb").read()
+            st.audio(audio_bytes, format="audio/wav")
 def play_bgm():
+    """Loop background BGM only while sound is enabled."""
     if st.session_state["sound_enabled"]:
-        with open("sounds/bgm.wav", "rb") as f:
-            audio_bytes = f.read()
-        st.audio(audio_bytes, format="audio/wav", autoplay=True)
-
+        bgm_path = "sounds/bgm.wav"
+        if os.path.exists(bgm_path):
+            audio64 = audio_base64(bgm_path)
+            # JS autoplay audio even when hidden
+            st.markdown(
+                f"""
+                <audio id="bgm" autoplay loop>
+                    <source src="data:audio/wav;base64,{audio64}" type="audio/wav">
+                </audio>
+                <script>
+                    var bgm = document.getElementById("bgm");
+                    if (bgm) {{
+                        bgm.volume = 0.25;   // lower volume
+                        bgm.play();
+                    }}
+                </script>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        # Stop the music when toggle is OFF
+        st.markdown(
+            """
+            <script>
+                var bgm = document.getElementById("bgm");
+                if (bgm) {
+                    bgm.pause();
+                    bgm.currentTime = 0;
+                }
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
 # ---------------- Helpers ----------------
 def manhattan(a, b): return abs(a[0] - b[0]) + abs(a[1] - b[1])
 def all_cells(n): return [[r, c] for r in range(n) for c in range(n)]
@@ -166,7 +205,10 @@ with st.sidebar:
     st.markdown(f"🚶 **Moves:** {st.session_state['moves']} / {st.session_state['max_moves']}")
 
     # 🔊 Toggle sound
-    st.session_state["sound_enabled"] = st.checkbox("🔊 Sound ON/OFF", value=False)
+    st.session_state["sound_enabled"] = st.sidebar.toggle("🔊 Sound Enabled", value=False)
+
+    # run / stop bgm depending on toggle
+    play_bgm()
 
     st.markdown("---")
     st.subheader("Controls")
