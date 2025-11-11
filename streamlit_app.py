@@ -7,7 +7,54 @@ import time
 st.set_page_config(page_title="Treasure Hunt", layout="wide")
 st.set_option("client.showErrorDetails", True)
 
-# ---------------- Safe initialization of session state (must run before UI) ----------------
+# ---------------- Tile CSS (square + transparent empty tile) ----------------
+st.markdown(
+    """
+    <style>
+    .square-tile {
+        aspect-ratio: 1 / 1;       /* keep square */
+        width: 100%;
+        border-radius: 6px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-size: 26px;
+        padding: 4px;
+    }
+    /* visible icon container: slight dark background so icons pop */
+    .icon-tile {
+        background: #0b1220;
+        color: #e6edf3;
+        width: 100%;
+        height: 100%;
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        border-radius:6px;
+    }
+    /* empty tile — transparent so it matches page background exactly */
+    .empty-tile {
+        background: transparent;
+        width:100%;
+        height:100%;
+        border-radius:6px;
+    }
+    /* fog tile style */
+    .fog-tile {
+        background: transparent;
+        color: #ffb4b4;
+        font-size: 20px;
+    }
+
+    @media (max-width:700px) {
+        .square-tile { font-size: 18px; padding: 2px; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------- Safe initialization of session state ----------------
 def init_session_defaults():
     defaults = {
         "difficulty": "Medium",
@@ -46,25 +93,27 @@ def sample_positions(n, exclude, count):
 
 # ---------------- Game initialization / reset ----------------
 def init_game(difficulty=None):
-    """Initialize or reset the game according to difficulty."""
+    """Initialize or reset the game according to difficulty.
+       Called on first load, on difficulty change, and via Restart (on_click).
+    """
     if difficulty is None:
-        difficulty = st.session_state["difficulty"]
+        difficulty = st.session_state.get("difficulty", "Medium")
 
     size_map = {"Easy": 8, "Medium": 10, "Hard": 12}
     size = size_map.get(difficulty, 10)
     st.session_state["grid_size"] = size
 
-    # Player start near center
-    start = [size // 2, size // 2]
-    st.session_state["player"] = start.copy()
-    st.session_state["start_pos"] = start.copy()
-
-    # reset stats
+    # FULL RESET (score, lives, moves)
     st.session_state["score"] = 0
     st.session_state["lives"] = 3
     st.session_state["moves"] = 0
 
-    # place treasure
+    # player start at center-ish
+    start = [size // 2, size // 2]
+    st.session_state["player"] = start.copy()
+    st.session_state["start_pos"] = start.copy()
+
+    # place treasure not on start
     cells = all_cells(size)
     if start in cells:
         cells.remove(start)
@@ -72,13 +121,12 @@ def init_game(difficulty=None):
     st.session_state["treasure"] = treasure
     cells.remove(treasure)
 
-    # item counts scaled with size (denser but not overwhelming)
+    # counts scale with size
     coins_count = max(4, size // 2)
     bombs_count = max(3, size // 3)
     hearts_count = max(1, size // 5)
 
     st.session_state["coins"] = sample_positions(size, [start, treasure], coins_count)
-    # ensure coins excluded when placing bombs/hearts
     excluded = [start, treasure] + st.session_state["coins"]
     st.session_state["bombs"] = sample_positions(size, excluded, bombs_count)
     excluded += st.session_state["bombs"]
@@ -87,15 +135,15 @@ def init_game(difficulty=None):
     # moves allowed = Manhattan(start, treasure) + 5
     st.session_state["max_moves"] = manhattan(start, treasure) + 5
 
+    # mark game initialized
     st.session_state["difficulty"] = difficulty
     st.session_state["prev_difficulty"] = difficulty
     st.session_state["game_initialized"] = True
 
-# Initialize first time or when difficulty changes
-selected_diff = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=["Easy","Medium","Hard"].index(st.session_state.get("difficulty", "Medium")))
-# If user changed difficulty or game not initialized, init
+# ---------------- initialize first time or after difficulty change ----------------
+# Use selectbox with key so difficulty is stored in session_state
+selected_diff = st.sidebar.selectbox("Difficulty", ["Easy", "Medium", "Hard"], index=["Easy","Medium","Hard"].index(st.session_state.get("difficulty", "Medium")), key="difficulty")
 if (not st.session_state["game_initialized"]) or (selected_diff != st.session_state.get("prev_difficulty")):
-    st.session_state["difficulty"] = selected_diff
     init_game(selected_diff)
 
 # ---------------- Visibility (fog) ----------------
@@ -103,12 +151,13 @@ def is_visible(r, c):
     pr, pc = st.session_state["player"]
     return abs(r - pr) <= 1 and abs(c - pc) <= 1
 
-# ---------------- Interaction logic (move/callback) ----------------
+# ---------------- Interaction logic (move callback) ----------------
 def apply_move(direction: str):
-    """Move player and handle interactions. This function is called by button callbacks."""
+    """Move player and handle interactions. Called by streamlit button callbacks."""
     size = st.session_state["grid_size"]
     r, c = st.session_state["player"]
 
+    # compute new position
     if direction == "up" and r > 0:
         r -= 1
     elif direction == "down" and r < size - 1:
@@ -118,8 +167,7 @@ def apply_move(direction: str):
     elif direction == "right" and c < size - 1:
         c += 1
     else:
-        # out-of-bounds or no change: do nothing
-        return
+        return  # out of bounds => nothing
 
     st.session_state["player"] = [r, c]
     st.session_state["moves"] += 1
@@ -191,8 +239,8 @@ with st.sidebar:
         st.button("⬅️ Left", key="btn_left", on_click=apply_move, args=("left",))
 
     st.markdown("---")
-    if st.button("🔄 Restart Game", key="btn_restart"):
-        init_game(st.session_state["difficulty"])
+    # Reliable restart using on_click so state reset is immediate and clean
+    st.button("🔄 Restart Game", key="btn_restart", on_click=init_game, args=(st.session_state["difficulty"],))
 
     st.markdown("---")
     st.subheader("How to play")
@@ -202,7 +250,7 @@ with st.sidebar:
 - Only the **3×3 area** around you is visible — everything else is covered by fog (`❔`).  
 - Collect **coins** (📀) for +10 score, **hearts** (❤️) to gain a life, avoid **bombs** (💣).  
 - You must reach treasure within **allowed moves** (Manhattan distance + 5). Running out of moves costs a life.  
-- Restart resets the board but keeps the selected difficulty.
+- Restart resets the board and score / lives / moves (fresh start).
 """
     )
 
@@ -218,18 +266,18 @@ for r in range(size):
         if is_visible(r, c):
             # visible tile
             if [r, c] == [pr, pc]:
-                col.markdown("<div style='text-align:center;font-size:30px'>🧛‍♂️</div>", unsafe_allow_html=True)
+                col.markdown("<div class='square-tile'><div class='icon-tile'>🧛‍♂️</div></div>", unsafe_allow_html=True)
             elif [r, c] == st.session_state["treasure"]:
-                col.markdown("<div style='text-align:center;font-size:26px'>💎</div>", unsafe_allow_html=True)
+                col.markdown("<div class='square-tile'><div class='icon-tile'>💎</div></div>", unsafe_allow_html=True)
             elif [r, c] in st.session_state["coins"]:
-                col.markdown("<div style='text-align:center;font-size:26px'>📀</div>", unsafe_allow_html=True)
+                col.markdown("<div class='square-tile'><div class='icon-tile'>📀</div></div>", unsafe_allow_html=True)
             elif [r, c] in st.session_state["hearts"]:
-                col.markdown("<div style='text-align:center;font-size:26px'>❤️</div>", unsafe_allow_html=True)
+                col.markdown("<div class='square-tile'><div class='icon-tile'>❤️</div></div>", unsafe_allow_html=True)
             elif [r, c] in st.session_state["bombs"]:
-                col.markdown("<div style='text-align:center;font-size:26px'>💣</div>", unsafe_allow_html=True)
+                col.markdown("<div class='square-tile'><div class='icon-tile'>💣</div></div>", unsafe_allow_html=True)
             else:
-                # dark tile to match background
-                col.markdown("<div style='text-align:center;background:#0b1220;border-radius:6px;padding:10px;color:#dbeafe;'>⬜</div>", unsafe_allow_html=True)
+                # empty visible tile: use transparent background so it matches page background
+                col.markdown("<div class='square-tile'><div class='empty-tile'></div></div>", unsafe_allow_html=True)
         else:
             # fog
-            col.markdown("<div style='text-align:center;color:#ffb4b4;font-size:20px'>❔</div>", unsafe_allow_html=True)
+            col.markdown("<div class='square-tile'><div class='fog-tile'>❔</div></div>", unsafe_allow_html=True)
