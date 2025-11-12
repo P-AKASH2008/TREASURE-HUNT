@@ -95,7 +95,6 @@ def init_game(difficulty=None):
     st.session_state["game_initialized"] = True
     st.session_state["awaiting_name"] = False
 
-
 # ---------------- Movement + Logic ----------------
 def apply_move(direction):
     if st.session_state["awaiting_name"]:
@@ -141,7 +140,7 @@ def apply_move(direction):
         st.success("💎 Treasure Found! +20 score")
         st.session_state["awaiting_name"] = True
         return
-
+        
     # Out of moves check
     if st.session_state["moves"] > st.session_state["max_moves"]:
         st.error("⌛ Out of moves!")
@@ -150,7 +149,6 @@ def apply_move(direction):
     if st.session_state["lives"] <= 0:
         st.error("💀 Game Over!")
         st.session_state["awaiting_name"] = True
-
 
 # ---------------- Sidebar ----------------
 selected = st.sidebar.selectbox(
@@ -230,7 +228,6 @@ for r in range(size):
                 col.markdown("<div style='text-align:center;background:#0b1220;border-radius:6px;padding:10px;'> </div>", unsafe_allow_html=True)
         else:
             col.markdown("<div style='text-align:center;color:#ffb4b4;font-size:20px'>❔</div>", unsafe_allow_html=True)
-
 
 # ---------------- SAVE SCORE SCREEN ----------------
 if st.session_state["awaiting_name"]:
